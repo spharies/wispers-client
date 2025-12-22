@@ -414,6 +414,243 @@ where
 {
 }
 
+pub mod ffi {
+    use super::*;
+    use std::{
+        ffi::{CStr, CString},
+        os::raw::c_char,
+        ptr,
+    };
+
+    type Manager = NodeStateManager<InMemoryNodeStateStore>;
+    type Pending = PendingNodeState<InMemoryNodeStateStore>;
+    type Registered = RegisteredNodeState<InMemoryNodeStateStore>;
+
+    #[repr(C)]
+    #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+    pub enum WispersStatus {
+        Success = 0,
+        NullPointer = 1,
+        InvalidUtf8 = 2,
+        StoreError = 3,
+        AlreadyRegistered = 4,
+        NotRegistered = 5,
+        UnexpectedStage = 6,
+    }
+
+    impl From<NodeStateError<InMemoryStoreError>> for WispersStatus {
+        fn from(value: NodeStateError<InMemoryStoreError>) -> Self {
+            match value {
+                NodeStateError::Store(_) => WispersStatus::StoreError,
+                NodeStateError::AlreadyRegistered => WispersStatus::AlreadyRegistered,
+                NodeStateError::NotRegistered => WispersStatus::NotRegistered,
+            }
+        }
+    }
+
+    pub struct WispersNodeStateManagerHandle(Manager);
+    pub struct WispersPendingNodeStateHandle(Pending);
+    pub struct WispersRegisteredNodeStateHandle(Registered);
+
+    fn c_str_to_string(ptr: *const c_char) -> Result<String, WispersStatus> {
+        if ptr.is_null() {
+            return Err(WispersStatus::NullPointer);
+        }
+        unsafe {
+            CStr::from_ptr(ptr)
+                .to_str()
+                .map(|s| s.to_owned())
+                .map_err(|_| WispersStatus::InvalidUtf8)
+        }
+    }
+
+    fn optional_c_str(ptr: *const c_char) -> Result<Option<String>, WispersStatus> {
+        if ptr.is_null() {
+            Ok(None)
+        } else {
+            c_str_to_string(ptr).map(Some)
+        }
+    }
+
+    unsafe fn reset_out_ptr<T>(out: *mut *mut T) {
+        if !out.is_null() {
+            unsafe {
+                *out = ptr::null_mut();
+            }
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn wispers_in_memory_manager_new() -> *mut WispersNodeStateManagerHandle {
+        let manager = NodeStateManager::new(InMemoryNodeStateStore::new());
+        Box::into_raw(Box::new(WispersNodeStateManagerHandle(manager)))
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn wispers_in_memory_manager_free(handle: *mut WispersNodeStateManagerHandle) {
+        if handle.is_null() {
+            return;
+        }
+        unsafe {
+            drop(Box::from_raw(handle));
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn wispers_manager_restore_or_init(
+        handle: *mut WispersNodeStateManagerHandle,
+        app_namespace: *const c_char,
+        profile_namespace: *const c_char,
+        out_pending: *mut *mut WispersPendingNodeStateHandle,
+        out_registered: *mut *mut WispersRegisteredNodeStateHandle,
+    ) -> WispersStatus {
+        if handle.is_null() || out_pending.is_null() || out_registered.is_null() {
+            return WispersStatus::NullPointer;
+        }
+
+        unsafe {
+            reset_out_ptr(out_pending);
+            reset_out_ptr(out_registered);
+        }
+
+        let app = match c_str_to_string(app_namespace) {
+            Ok(value) => value,
+            Err(err) => return err,
+        };
+        let profile = match optional_c_str(profile_namespace) {
+            Ok(value) => value,
+            Err(err) => return err,
+        };
+
+        let manager = unsafe { &mut (*handle).0 };
+        match manager.restore_or_init_node_state(app, profile) {
+            Ok(NodeStateStage::Pending(pending)) => {
+                let boxed = Box::new(WispersPendingNodeStateHandle(pending));
+                unsafe {
+                    *out_pending = Box::into_raw(boxed);
+                }
+                WispersStatus::Success
+            }
+            Ok(NodeStateStage::Registered(registered)) => {
+                let boxed = Box::new(WispersRegisteredNodeStateHandle(registered));
+                unsafe {
+                    *out_registered = Box::into_raw(boxed);
+                }
+                WispersStatus::Success
+            }
+            Err(err) => err.into(),
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn wispers_pending_state_free(handle: *mut WispersPendingNodeStateHandle) {
+        if handle.is_null() {
+            return;
+        }
+        unsafe {
+            drop(Box::from_raw(handle));
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn wispers_registered_state_free(handle: *mut WispersRegisteredNodeStateHandle) {
+        if handle.is_null() {
+            return;
+        }
+        unsafe {
+            drop(Box::from_raw(handle));
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn wispers_pending_state_registration_url(
+        handle: *mut WispersPendingNodeStateHandle,
+        base_url: *const c_char,
+    ) -> *mut c_char {
+        if handle.is_null() || base_url.is_null() {
+            return ptr::null_mut();
+        }
+
+        let base = match c_str_to_string(base_url) {
+            Ok(value) => value,
+            Err(_) => return ptr::null_mut(),
+        };
+
+        let url = unsafe { (*handle).0.registration_url(&base) };
+        match CString::new(url) {
+            Ok(cstr) => cstr.into_raw(),
+            Err(_) => ptr::null_mut(),
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn wispers_string_free(ptr: *mut c_char) {
+        if ptr.is_null() {
+            return;
+        }
+        unsafe {
+            drop(CString::from_raw(ptr));
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn wispers_pending_state_complete_registration(
+        handle: *mut WispersPendingNodeStateHandle,
+        connectivity_group_id: *const c_char,
+        node_id: *const c_char,
+        out_registered: *mut *mut WispersRegisteredNodeStateHandle,
+    ) -> WispersStatus {
+        if handle.is_null() || out_registered.is_null() {
+            return WispersStatus::NullPointer;
+        }
+
+        unsafe {
+            reset_out_ptr(out_registered);
+        }
+
+        let connectivity = match c_str_to_string(connectivity_group_id) {
+            Ok(value) => value,
+            Err(err) => return err,
+        };
+        let node = match c_str_to_string(node_id) {
+            Ok(value) => value,
+            Err(err) => return err,
+        };
+
+        let wrapper = unsafe { Box::from_raw(handle) };
+        let WispersPendingNodeStateHandle(pending) = *wrapper;
+
+        match pending.complete_registration(NodeRegistration {
+            connectivity_group_id: ConnectivityGroupId::from(connectivity),
+            node_id: NodeId::from(node),
+        }) {
+            Ok(registered) => {
+                let boxed = Box::new(WispersRegisteredNodeStateHandle(registered));
+                unsafe {
+                    *out_registered = Box::into_raw(boxed);
+                }
+                WispersStatus::Success
+            }
+            Err(err) => err.into(),
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn wispers_registered_state_delete(
+        handle: *mut WispersRegisteredNodeStateHandle,
+    ) -> WispersStatus {
+        if handle.is_null() {
+            return WispersStatus::NullPointer;
+        }
+        let wrapper = unsafe { Box::from_raw(handle) };
+        let result = wrapper.0.delete().map(|_| WispersStatus::Success);
+        match result {
+            Ok(status) => status,
+            Err(err) => err.into(),
+        }
+    }
+}
+
 /// Abstraction over the persistence backend for node state.
 pub trait NodeStateStore {
     type Error;
