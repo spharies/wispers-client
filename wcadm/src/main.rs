@@ -102,9 +102,9 @@ impl ApiKey {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ListGroupsResponse {
-    #[serde(default)]
-    connectivity_group_ids: Vec<String>,
+struct GroupSummary {
+    id: String,
+    name: Option<String>,
 }
 
 fn list_groups(client: &Client, base_url: &str, api_key: &str) -> Result<()> {
@@ -122,14 +122,17 @@ fn list_groups(client: &Client, base_url: &str, api_key: &str) -> Result<()> {
         bail!("server returned {status}: {body}");
     }
 
-    let data: ListGroupsResponse = resp.json().context("failed to parse response")?;
+    let groups: Vec<GroupSummary> = resp.json().context("failed to parse response")?;
 
-    if data.connectivity_group_ids.is_empty() {
+    if groups.is_empty() {
         println!("No connectivity groups found.");
     } else {
         println!("Connectivity groups:");
-        for id in data.connectivity_group_ids {
-            println!("  {id}");
+        for group in groups {
+            match &group.name {
+                Some(name) => println!("  {} ({})", group.id, name),
+                None => println!("  {}", group.id),
+            }
         }
     }
 
