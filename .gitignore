@@ -40,6 +40,8 @@
 # debug information files
 *.dwo
 
+# Environment files
+.env
 
 # Added by cargo
 

@@ -1,0 +1,12 @@
+[package]
+name = "wcadm"
+version = "0.1.0"
+edition = "2024"
+description = "CLI tool for managing Wispers Connect domains"
+
+[[bin]]
+name = "wcadm"
+path = "src/main.rs"
+
+[dependencies]
+# Future: clap, reqwest, tokio, etc.

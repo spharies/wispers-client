@@ -171,7 +171,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
-name = "wispers_connect_client"
+name = "wcadm"
+version = "0.1.0"
+
+[[package]]
+name = "wispers-connect"
 version = "0.1.0"
 dependencies = [
  "bincode",
