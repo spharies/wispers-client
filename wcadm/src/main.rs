@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use reqwest::blocking::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// CLI tool for managing Wispers Connect domains.
 #[derive(Parser)]
@@ -23,7 +23,11 @@ enum Command {
         group_id: Option<String>,
     },
     /// Add a new connectivity group
-    Add,
+    Add {
+        /// Optional name for the connectivity group
+        #[arg(long)]
+        name: Option<String>,
+    },
     /// Remove a connectivity group
     Remove {
         /// Connectivity group ID to remove
@@ -50,7 +54,7 @@ fn run() -> Result<()> {
         Command::List {
             group_id: Some(id),
         } => list_group(&client, &base_url, &cli.api_key, &id),
-        Command::Add => add_group(&client, &base_url, &cli.api_key),
+        Command::Add { name } => add_group(&client, &base_url, &cli.api_key, name.as_deref()),
         Command::Remove { group_id } => remove_group(&client, &base_url, &cli.api_key, &group_id),
     }
 }
@@ -136,6 +140,7 @@ fn list_groups(client: &Client, base_url: &str, api_key: &str) -> Result<()> {
 #[serde(rename_all = "camelCase")]
 struct GroupResponse {
     id: String,
+    name: Option<String>,
     created_at: String,
     #[serde(default)]
     nodes: Vec<NodeResponse>,
@@ -168,6 +173,9 @@ fn list_group(client: &Client, base_url: &str, api_key: &str, group_id: &str) ->
     let data: GroupResponse = resp.json().context("failed to parse response")?;
 
     println!("Connectivity group: {}", data.id);
+    if let Some(name) = &data.name {
+        println!("  Name: {name}");
+    }
     println!("  Created: {}", data.created_at);
     if data.nodes.is_empty() {
         println!("  Nodes: (none)");
@@ -186,12 +194,22 @@ fn list_group(client: &Client, base_url: &str, api_key: &str, group_id: &str) ->
     Ok(())
 }
 
-fn add_group(client: &Client, base_url: &str, api_key: &str) -> Result<()> {
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateGroupRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<&'a str>,
+}
+
+fn add_group(client: &Client, base_url: &str, api_key: &str, name: Option<&str>) -> Result<()> {
     let url = format!("{base_url}/api/v1/connectivity-groups");
+
+    let body = CreateGroupRequest { name };
 
     let resp = client
         .post(&url)
         .bearer_auth(api_key)
+        .json(&body)
         .send()
         .context("failed to send request")?;
 
@@ -205,6 +223,9 @@ fn add_group(client: &Client, base_url: &str, api_key: &str) -> Result<()> {
 
     println!("Created connectivity group:");
     println!("  ID: {}", data.id);
+    if let Some(name) = &data.name {
+        println!("  Name: {name}");
+    }
     println!("  Created: {}", data.created_at);
 
     Ok(())
