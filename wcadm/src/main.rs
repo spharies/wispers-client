@@ -99,6 +99,7 @@ impl ApiKey {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ListGroupsResponse {
+    #[serde(default)]
     connectivity_group_ids: Vec<String>,
 }
 
