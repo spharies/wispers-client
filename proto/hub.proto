@@ -6,18 +6,37 @@ package connect.hub;
 option go_package = "connect/client/proto/hubpb";
 option java_package = "dev.wispers.connect.proto.hub";
 
+import "roster.proto";
+
 service Hub {
   // Completes node registration using a registration token.
   // Returns the node's credentials for future authenticated requests.
   rpc CompleteNodeRegistration(NodeRegistrationRequest) returns (NodeRegistration) {}
 
+  // RPCs below all require authentication via metadata:
+  // x-connectivity-group-id, x-node-number, x-auth-token
+
+  // Activation.
+  rpc PairNodes(PairNodesMessage) returns (PairNodesMessage) {}
+  rpc UpdateRoster(UpdateRosterRequest) returns (UpdateRosterResponse) {}
+
   // Lists all nodes in the same connectivity group as the caller.
-  // Requires authentication via metadata:
-  //   x-connectivity-group-id, x-node-number, x-auth-token
-  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse) {}
+  rpc ListNodes(ListNodesRequest) returns (NodeList) {}
+
+  // Returns the cryptographic roster of the node's connectivity group.
+  rpc GetRoster(RosterRequest) returns (roster.Roster) {}
+
+  // Opens a persistent, bidirectional connection for the node to serve incoming
+  // requests.  The hub forwards requests through this stream; the node sends
+  // responses back.
+  rpc StartServing(stream ServingResponse) returns (stream ServingRequest) {}
+
+  // TODO:
+  // - Connect two nodes (STUN/TURN)
+
 }
 
-//-- Node registration ---------------------------------------------------------
+//-- Registration --------------------------------------------------------------
 
 message NodeRegistrationRequest {
   string token = 1;
@@ -29,13 +48,50 @@ message NodeRegistration {
   string auth_token = 3;
 }
 
-//-- List nodes ----------------------------------------------------------------
+//-- Activation ----------------------------------------------------------------
+
+message PairNodesMessage {
+  message Payload {
+    // Node numbers in the same connectivity group.
+    int32 sender_node_number = 1;
+    int32 receiver_node_number = 2;
+    // The sender's public key.
+    bytes public_key_spki = 3;
+    // Nonces to prevent replays. reply_nonce is set if this PairNodes request
+    // is in response to a previous request.
+    bytes nonce = 4;
+    bytes reply_nonce = 5;
+  }
+  Payload payload = 1;
+  bytes mac = 2;
+}
+
+message UpdateRosterRequest {
+  roster.Roster new_roster = 1;
+  bytes new_node_signature = 2;
+}
+
+message UpdateRosterResponse {
+  roster.Roster cosigned_roster = 1;
+}
+
+message RosterCosignRequest {
+  int64 new_node_number = 1;
+  roster.Roster new_roster = 2;
+  bytes new_node_signature = 3;
+}
+
+message RosterCosignResponse {
+  bytes endorser_signature = 1;
+}
+
+//-- Connectivity group state --------------------------------------------------
 
 message ListNodesRequest {
   // Empty - connectivity_group_id is derived from authenticated caller
 }
 
-message ListNodesResponse {
+message NodeList {
   repeated Node nodes = 1;
 }
 
@@ -43,4 +99,31 @@ message Node {
   int32 node_number = 1;
   string name = 2;
   int64 last_seen_at_millis = 3;
+}
+
+message RosterRequest {
+  // Empty - connectivity_group_id is derived from authenticated caller
+}
+
+//-- Serving -------------------------------------------------------------------
+
+message ServingRequest {
+  int32 requester_node_number = 1;
+  int64 request_id = 2;
+
+  oneof kind {
+    PairNodesMessage pair_nodes_message = 10;
+    RosterCosignRequest roster_cosign_request = 11;
+  }
+}
+
+message ServingResponse {
+  int32 requester_node_number = 1;
+  int64 request_id = 2;
+  string error = 3;
+
+  oneof kind {
+    PairNodesMessage pair_nodes_message = 10;
+    RosterCosignResponse roster_cosign_response = 11;
+  }
 }
