@@ -108,7 +108,7 @@ message RosterRequest {
 //-- Serving -------------------------------------------------------------------
 
 message ServingRequest {
-  int32 requester_node_number = 1;
+  int32 dest_node_number = 1;
   int64 request_id = 2;
 
   oneof kind {
@@ -118,9 +118,8 @@ message ServingRequest {
 }
 
 message ServingResponse {
-  int32 requester_node_number = 1;
-  int64 request_id = 2;
-  string error = 3;
+  int64 request_id = 1;
+  string error = 2;
 
   oneof kind {
     PairNodesMessage pair_nodes_message = 10;
