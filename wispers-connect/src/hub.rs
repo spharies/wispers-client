@@ -74,26 +74,9 @@ impl HubClient {
     }
 
     /// List all nodes in the connectivity group.
-    ///
-    /// Requires valid credentials from a completed registration.
     pub async fn list_nodes(&mut self, registration: &NodeRegistration) -> Result<Vec<Node>, HubError> {
-        let auth_token = registration
-            .auth_token()
-            .expect("registration must have auth token");
-
         let mut request = tonic::Request::new(proto::ListNodesRequest {});
-        request.metadata_mut().insert(
-            "x-connectivity-group-id",
-            MetadataValue::try_from(registration.connectivity_group_id.to_string())?,
-        );
-        request.metadata_mut().insert(
-            "x-node-number",
-            MetadataValue::try_from(registration.node_number.to_string())?,
-        );
-        request.metadata_mut().insert(
-            "x-auth-token",
-            MetadataValue::try_from(auth_token.as_str())?,
-        );
+        add_auth_metadata(request.metadata_mut(), registration)?;
 
         let response = self.client.list_nodes(request).await?;
         let nodes = response
@@ -108,4 +91,72 @@ impl HubClient {
             .collect();
         Ok(nodes)
     }
+
+    /// Send a pairing message to another node (routed through the hub).
+    pub async fn pair_nodes(
+        &mut self,
+        registration: &NodeRegistration,
+        message: proto::PairNodesMessage,
+    ) -> Result<proto::PairNodesMessage, HubError> {
+        let mut request = tonic::Request::new(message);
+        add_auth_metadata(request.metadata_mut(), registration)?;
+
+        let response = self.client.pair_nodes(request).await?;
+        Ok(response.into_inner())
+    }
+
+    /// Get the current roster for the connectivity group.
+    pub async fn get_roster(
+        &mut self,
+        registration: &NodeRegistration,
+    ) -> Result<proto::connect::roster::Roster, HubError> {
+        let mut request = tonic::Request::new(proto::RosterRequest {});
+        add_auth_metadata(request.metadata_mut(), registration)?;
+
+        let response = self.client.get_roster(request).await?;
+        Ok(response.into_inner())
+    }
+
+    /// Submit a roster update. The hub will obtain the endorser's cosignature
+    /// and return the fully signed roster.
+    pub async fn update_roster(
+        &mut self,
+        registration: &NodeRegistration,
+        new_roster: proto::connect::roster::Roster,
+    ) -> Result<proto::connect::roster::Roster, HubError> {
+        let mut request = tonic::Request::new(proto::UpdateRosterRequest {
+            new_roster: Some(new_roster),
+        });
+        add_auth_metadata(request.metadata_mut(), registration)?;
+
+        let response = self.client.update_roster(request).await?;
+        response
+            .into_inner()
+            .cosigned_roster
+            .ok_or_else(|| HubError::Rpc(tonic::Status::internal("missing cosigned_roster in response")))
+    }
+}
+
+/// Add authentication metadata to a request.
+fn add_auth_metadata(
+    metadata: &mut tonic::metadata::MetadataMap,
+    registration: &NodeRegistration,
+) -> Result<(), HubError> {
+    let auth_token = registration
+        .auth_token()
+        .expect("registration must have auth token");
+
+    metadata.insert(
+        "x-connectivity-group-id",
+        MetadataValue::try_from(registration.connectivity_group_id.to_string())?,
+    );
+    metadata.insert(
+        "x-node-number",
+        MetadataValue::try_from(registration.node_number.to_string())?,
+    );
+    metadata.insert(
+        "x-auth-token",
+        MetadataValue::try_from(auth_token.as_str())?,
+    );
+    Ok(())
 }

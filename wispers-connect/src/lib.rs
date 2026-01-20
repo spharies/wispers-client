@@ -9,7 +9,7 @@ pub mod types;
 pub use crypto::{PairingCode, PairingSecret, SigningKeyPair};
 pub use errors::{NodeStateError, WispersStatus};
 pub use hub::{HubError, Node};
-pub use state::{NodeStateStage, NodeStorage, PendingNodeState, RegisteredNodeState};
+pub use state::{ActivatedNode, NodeStateStage, NodeStorage, PendingNodeState, RegisteredNodeState};
 pub use storage::{FileNodeStateStore, InMemoryNodeStateStore, NodeStateStore};
 pub use types::{
     AppNamespace, AuthToken, ConnectivityGroupId, NodeRegistration, ProfileNamespace, ROOT_KEY_LEN,

@@ -62,6 +62,9 @@ impl From<NodeStateError<InMemoryStoreError>> for WispersStatus {
             NodeStateError::Hub(_) => WispersStatus::StoreError, // TODO: add proper status
             NodeStateError::AlreadyRegistered => WispersStatus::AlreadyRegistered,
             NodeStateError::NotRegistered => WispersStatus::NotRegistered,
+            NodeStateError::InvalidPairingCode(_) => WispersStatus::InvalidPairingCode,
+            NodeStateError::MacVerificationFailed => WispersStatus::ActivationFailed,
+            NodeStateError::MissingEndorserResponse => WispersStatus::ActivationFailed,
         }
     }
 }
@@ -81,6 +84,9 @@ impl From<NodeStateError<ForeignStoreError>> for WispersStatus {
             NodeStateError::Hub(_) => WispersStatus::StoreError, // TODO: add proper status
             NodeStateError::AlreadyRegistered => WispersStatus::AlreadyRegistered,
             NodeStateError::NotRegistered => WispersStatus::NotRegistered,
+            NodeStateError::InvalidPairingCode(_) => WispersStatus::InvalidPairingCode,
+            NodeStateError::MacVerificationFailed => WispersStatus::ActivationFailed,
+            NodeStateError::MissingEndorserResponse => WispersStatus::ActivationFailed,
         }
     }
 }

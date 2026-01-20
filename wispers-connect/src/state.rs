@@ -1,6 +1,9 @@
+use crate::crypto::{generate_nonce, PairingCode, SigningKeyPair};
 use crate::errors::NodeStateError;
+use crate::hub::proto;
 use crate::storage::{NodeStateStore, SharedStore};
 use crate::types::{AppNamespace, NodeRegistration, NodeState, ProfileNamespace};
+use prost::Message;
 use std::sync::Arc;
 use urlencoding::encode;
 
@@ -213,6 +216,165 @@ impl<S: NodeStateStore> RegisteredNodeState<S> {
             .await
             .map_err(NodeStateError::hub)
     }
+
+    /// Activate this node by pairing with an endorser node.
+    ///
+    /// The pairing code format is "node_number-secret" where secret is 10 base36 characters.
+    /// This performs the mutual key exchange and roster update, returning an activated node.
+    pub async fn activate(
+        &self,
+        hub_addr: &str,
+        pairing_code: &str,
+    ) -> Result<ActivatedNode, NodeStateError<S::Error>> {
+        use crate::hub::HubClient;
+
+        // Parse the pairing code
+        let pairing_code =
+            PairingCode::parse(pairing_code).map_err(NodeStateError::InvalidPairingCode)?;
+        let endorser_node_number = pairing_code.node_number;
+
+        // Derive our signing key
+        let signing_key = SigningKeyPair::derive_from_root_key(self.state.root_key.as_bytes());
+
+        // Build the pairing request
+        let nonce = generate_nonce();
+        let payload = proto::pair_nodes_message::Payload {
+            sender_node_number: self.registration().node_number,
+            receiver_node_number: endorser_node_number,
+            public_key_spki: signing_key.public_key_spki(),
+            nonce: nonce.clone(),
+            reply_nonce: vec![],
+        };
+        let payload_bytes = payload.encode_to_vec();
+        let mac = pairing_code.secret.compute_mac(&payload_bytes);
+
+        let request_message = proto::PairNodesMessage {
+            payload: Some(payload),
+            mac,
+        };
+
+        // Connect and send the pairing request
+        let mut client = HubClient::connect(hub_addr)
+            .await
+            .map_err(NodeStateError::hub)?;
+
+        let response = client
+            .pair_nodes(self.registration(), request_message)
+            .await
+            .map_err(NodeStateError::hub)?;
+
+        // Verify the response
+        let response_payload = response
+            .payload
+            .ok_or(NodeStateError::MissingEndorserResponse)?;
+        let response_payload_bytes = response_payload.encode_to_vec();
+
+        if !pairing_code.secret.verify_mac(&response_payload_bytes, &response.mac) {
+            return Err(NodeStateError::MacVerificationFailed);
+        }
+
+        // Verify the response is for us and contains the expected reply_nonce
+        if response_payload.receiver_node_number != self.registration().node_number {
+            return Err(NodeStateError::MissingEndorserResponse);
+        }
+        if response_payload.reply_nonce != nonce {
+            return Err(NodeStateError::MacVerificationFailed);
+        }
+
+        let endorser_public_key_spki = response_payload.public_key_spki.clone();
+        let endorser_nonce = response_payload.nonce.clone();
+
+        // Fetch the current roster
+        let current_roster = client
+            .get_roster(self.registration())
+            .await
+            .map_err(NodeStateError::hub)?;
+
+        // Build the activation addendum
+        let base_version = current_roster.version;
+        let base_version_hash = compute_roster_hash(&current_roster);
+        let new_version = base_version + 1;
+
+        let activation_payload = proto::connect::roster::activation::Payload {
+            base_version,
+            base_version_hash,
+            new_version,
+            new_node_number: self.registration().node_number,
+            endorser_node_number,
+            new_node_nonce: nonce,
+            endorser_nonce,
+        };
+        let activation_payload_bytes = activation_payload.encode_to_vec();
+        let new_node_signature = signing_key.sign(&activation_payload_bytes);
+
+        let activation = proto::connect::roster::Activation {
+            payload: Some(activation_payload),
+            new_node_signature,
+            endorser_signature: vec![], // Hub will get this from the endorser
+        };
+
+        // Build the new roster
+        let mut new_roster = current_roster.clone();
+        new_roster.version = new_version;
+        new_roster.nodes.push(proto::connect::roster::Node {
+            node_number: self.registration().node_number,
+            public_key_spki: signing_key.public_key_spki(),
+        });
+        new_roster.addenda.push(proto::connect::roster::Addendum {
+            kind: Some(proto::connect::roster::addendum::Kind::Activation(activation)),
+        });
+
+        // Submit the roster update
+        let cosigned_roster = client
+            .update_roster(self.registration(), new_roster)
+            .await
+            .map_err(NodeStateError::hub)?;
+
+        Ok(ActivatedNode {
+            signing_key,
+            endorser_public_key_spki,
+            roster: cosigned_roster,
+            registration: self.registration().clone(),
+        })
+    }
+}
+
+/// An activated node that has completed pairing and roster update.
+pub struct ActivatedNode {
+    signing_key: SigningKeyPair,
+    endorser_public_key_spki: Vec<u8>,
+    roster: proto::connect::roster::Roster,
+    registration: NodeRegistration,
+}
+
+impl ActivatedNode {
+    /// Get the node's signing key pair.
+    pub fn signing_key(&self) -> &SigningKeyPair {
+        &self.signing_key
+    }
+
+    /// Get the endorser's public key in SPKI format.
+    pub fn endorser_public_key_spki(&self) -> &[u8] {
+        &self.endorser_public_key_spki
+    }
+
+    /// Get the current roster.
+    pub fn roster(&self) -> &proto::connect::roster::Roster {
+        &self.roster
+    }
+
+    /// Get the node registration info.
+    pub fn registration(&self) -> &NodeRegistration {
+        &self.registration
+    }
+}
+
+/// Compute a hash of the roster for version verification.
+fn compute_roster_hash(roster: &proto::connect::roster::Roster) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(roster.encode_to_vec());
+    hasher.finalize().to_vec()
 }
 
 #[cfg(test)]

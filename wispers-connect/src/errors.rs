@@ -6,6 +6,9 @@ pub enum NodeStateError<StoreError> {
     Hub(crate::hub::HubError),
     AlreadyRegistered,
     NotRegistered,
+    InvalidPairingCode(crate::crypto::PairingCodeError),
+    MacVerificationFailed,
+    MissingEndorserResponse,
 }
 
 impl<StoreError> NodeStateError<StoreError> {
@@ -25,6 +28,9 @@ impl<StoreError: fmt::Display> fmt::Display for NodeStateError<StoreError> {
             NodeStateError::Hub(err) => write!(f, "hub error: {err}"),
             NodeStateError::AlreadyRegistered => write!(f, "node is already registered"),
             NodeStateError::NotRegistered => write!(f, "node has not completed registration"),
+            NodeStateError::InvalidPairingCode(err) => write!(f, "invalid pairing code: {err}"),
+            NodeStateError::MacVerificationFailed => write!(f, "MAC verification failed"),
+            NodeStateError::MissingEndorserResponse => write!(f, "missing endorser response"),
         }
     }
 }
@@ -48,4 +54,6 @@ pub enum WispersStatus {
     NotFound = 7,
     BufferTooSmall = 8,
     MissingCallback = 9,
+    InvalidPairingCode = 10,
+    ActivationFailed = 11,
 }
