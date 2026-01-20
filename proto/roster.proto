@@ -8,13 +8,12 @@ option go_package = "connect/client/proto/rosterpb";
 option java_package = "dev.wispers.connect.proto.roster";
 
 // The roster is a cryptographically signed list of nodes in a connectivity
-// group. It maintains a verifiable history of additions and revocations,
-// preventing the hub from unilaterally modifying membership.
+// group. It maintains a verifiable history of changes (activations and
+// revocations), preventing the hub from unilaterally modifying membership.
 message Roster {
   int64 version = 1;
   repeated Node nodes = 2;
   repeated Addendum addenda = 3;
-  repeated Revocation revocations = 4;
 }
 
 // A node in the connectivity group.
@@ -23,9 +22,17 @@ message Node {
   bytes public_key_spki = 2;
 }
 
-// Records the addition of a new node to the roster.
-// Adding a node requires two signatures: the new node and an existing endorser.
+// A single change to the roster history.
 message Addendum {
+  oneof kind {
+    Activation activation = 1;
+    Revocation revocation = 2;
+  }
+}
+
+// Records the activation of a new node.
+// Requires two signatures: the new node and an existing endorser.
+message Activation {
   message Payload {
     int64 base_version = 1;
     bytes base_version_hash = 2;
