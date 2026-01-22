@@ -87,12 +87,12 @@ The runner internally:
 - [x] JSON-lines protocol over UDS
 - [x] Translate JSON commands to ServingHandle method calls
 
-### 4. Integrate daemon into `wconnect serve`
-- [ ] Create ServingSession, get handle
-- [ ] Spawn runner task
-- [ ] Start UDS listener, pass handle to connection handlers
-- [ ] Handle stale socket cleanup on startup
-- [ ] Graceful shutdown when runner completes or shutdown requested
+### 4. Integrate daemon into `wconnect serve` ✓
+- [x] Create ServingSession, get handle
+- [x] Spawn runner task
+- [x] Start UDS listener, pass handle to connection handlers
+- [x] Handle stale socket cleanup on startup (in DaemonServer::bind)
+- [x] Graceful shutdown when runner completes or shutdown requested
 
 ### 5. Add daemon client mode to wconnect
 - [ ] Detect running daemon by trying to connect to socket

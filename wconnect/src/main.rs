@@ -210,13 +210,65 @@ async fn serve(hub_override: Option<&str>) -> Result<()> {
         NodeStateStage::Activated(a) => a,
     };
 
-    let (_handle, session) = activated
+    let reg = activated.registration();
+    let cg_id = reg.connectivity_group_id.to_string();
+    let node_number = reg.node_number;
+
+    let (handle, session) = activated
         .start_serving()
         .await
         .context("failed to start serving")?;
 
-    // TODO: Add UDS listener and use handle for commands
-    // For now, just run the session directly
-    session.run().await.context("serve failed")?;
+    // Start UDS daemon server
+    let daemon = daemon::DaemonServer::bind(&cg_id, node_number)
+        .await
+        .context("failed to start daemon")?;
+
+    println!(
+        "Serving node {} in group {} (socket: {:?})",
+        node_number,
+        cg_id,
+        daemon.path()
+    );
+
+    // Spawn the serving session runner
+    let mut session_task = tokio::spawn(async move { session.run().await });
+
+    // Accept daemon client connections until session ends or shutdown
+    loop {
+        tokio::select! {
+            // Session completed (hub disconnected, error, or shutdown via handle)
+            result = &mut session_task => {
+                match result {
+                    Ok(Ok(())) => {
+                        println!("Session ended normally");
+                        break;
+                    }
+                    Ok(Err(e)) => {
+                        return Err(anyhow::anyhow!("Session error: {}", e));
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("Session task panicked: {}", e));
+                    }
+                }
+            }
+
+            // New daemon client connection
+            result = daemon.accept() => {
+                match result {
+                    Ok(stream) => {
+                        let client_handle = handle.clone();
+                        tokio::spawn(async move {
+                            daemon::handle_client(stream, client_handle).await;
+                        });
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to accept daemon connection: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }
