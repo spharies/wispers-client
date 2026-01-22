@@ -231,6 +231,9 @@ impl ServingSession {
         );
 
         match request.kind {
+            Some(proto::serving_request::Kind::Welcome(_)) => {
+                println!("  Welcome received");
+            }
             Some(proto::serving_request::Kind::PairNodesMessage(msg)) => {
                 self.handle_pair_nodes_message(request.request_id, msg).await;
             }

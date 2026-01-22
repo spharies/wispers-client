@@ -105,13 +105,19 @@ message RosterRequest {
 
 //-- Serving -------------------------------------------------------------------
 
+// Initial message sent by hub when a node connects to StartServing.
+message Welcome {
+  // Reserved for future use (e.g., roster, display name).
+}
+
 message ServingRequest {
   int32 dest_node_number = 1;
   int64 request_id = 2;
 
   oneof kind {
-    PairNodesMessage pair_nodes_message = 10;
-    RosterCosignRequest roster_cosign_request = 11;
+    Welcome welcome = 10;
+    PairNodesMessage pair_nodes_message = 11;
+    RosterCosignRequest roster_cosign_request = 12;
   }
 }
 
