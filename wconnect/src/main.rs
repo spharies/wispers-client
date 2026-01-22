@@ -173,42 +173,45 @@ async fn status(hub_override: Option<&str>) -> Result<()> {
             println!("Registered (not yet activated):");
             println!("  Connectivity group: {}", reg.connectivity_group_id);
             println!("  Node number: {}", reg.node_number);
+            print_daemon_status(&reg.connectivity_group_id.to_string(), reg.node_number).await;
         }
         NodeStateStage::Activated(a) => {
             let reg = a.registration();
             println!("Activated:");
             println!("  Connectivity group: {}", reg.connectivity_group_id);
             println!("  Node number: {}", reg.node_number);
-
-            // Check if daemon is running
-            match daemon::DaemonClient::connect(&reg.connectivity_group_id.to_string(), reg.node_number).await {
-                Ok(mut client) => {
-                    match client.request(&daemon::Request::Status).await {
-                        Ok(daemon::Response::Success { data: daemon::ResponseData::Status(s), .. }) => {
-                            println!("  Daemon: running");
-                            if let Some(endorsing) = s.endorsing {
-                                match endorsing {
-                                    daemon::EndorsingData::AwaitingPairNode => {
-                                        println!("  Endorsing: awaiting pair node");
-                                    }
-                                    daemon::EndorsingData::AwaitingCosign { new_node_number } => {
-                                        println!("  Endorsing: awaiting cosign for node {}", new_node_number);
-                                    }
-                                }
-                            }
-                        }
-                        _ => {
-                            println!("  Daemon: running (status unavailable)");
-                        }
-                    }
-                }
-                Err(_) => {
-                    println!("  Daemon: not running");
-                }
-            }
+            print_daemon_status(&reg.connectivity_group_id.to_string(), reg.node_number).await;
         }
     }
     Ok(())
+}
+
+async fn print_daemon_status(cg_id: &str, node_number: i32) {
+    match daemon::DaemonClient::connect(cg_id, node_number).await {
+        Ok(mut client) => {
+            match client.request(&daemon::Request::Status).await {
+                Ok(daemon::Response::Success { data: daemon::ResponseData::Status(s), .. }) => {
+                    println!("  Daemon: running");
+                    if let Some(endorsing) = s.endorsing {
+                        match endorsing {
+                            daemon::EndorsingData::AwaitingPairNode => {
+                                println!("  Endorsing: awaiting pair node");
+                            }
+                            daemon::EndorsingData::AwaitingCosign { new_node_number } => {
+                                println!("  Endorsing: awaiting cosign for node {}", new_node_number);
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    println!("  Daemon: running (status unavailable)");
+                }
+            }
+        }
+        Err(_) => {
+            println!("  Daemon: not running");
+        }
+    }
 }
 
 async fn logout(hub_override: Option<&str>) -> Result<()> {
