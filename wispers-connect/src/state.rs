@@ -2,7 +2,7 @@ use crate::crypto::{generate_nonce, PairingCode, SigningKeyPair};
 use crate::errors::NodeStateError;
 use crate::hub::proto;
 use crate::roster::{
-    build_activation_payload, create_activation_roster, create_bootstrap_roster,
+    build_activation_payload, create_activation_roster, create_bootstrap_roster, verify_roster,
 };
 use crate::storage::{NodeStateStore, SharedStore};
 use crate::types::{AppNamespace, NodeRegistration, NodeState, ProfileNamespace};
@@ -135,6 +135,15 @@ impl<S: NodeStateStore> NodeStorage<S> {
 
         if is_activated {
             let signing_key = SigningKeyPair::derive_from_root_key(state.root_key.as_bytes());
+
+            // Verify the roster cryptographically before trusting it
+            verify_roster(
+                &roster,
+                registration.node_number,
+                &signing_key.public_key_spki(),
+            )
+            .map_err(NodeStateError::RosterVerificationFailed)?;
+
             Ok(NodeStateStage::Activated(ActivatedNode {
                 signing_key,
                 roster,
@@ -448,6 +457,17 @@ impl<S: NodeStateStore> RegisteredNodeState<S> {
             .await
             .map_err(NodeStateError::hub)?;
 
+        // Verify the base roster if not bootstrap (version > 0)
+        // We verify from the endorser's perspective since we're not in the roster yet
+        if current_roster.version > 0 {
+            verify_roster(
+                &current_roster,
+                endorser_node_number,
+                &response_payload.public_key_spki,
+            )
+            .map_err(NodeStateError::RosterVerificationFailed)?;
+        }
+
         // Build and sign the activation payload
         let activation_payload = build_activation_payload(
             &current_roster,
@@ -489,6 +509,15 @@ impl<S: NodeStateStore> RegisteredNodeState<S> {
             .update_roster(self.registration(), new_roster)
             .await
             .map_err(NodeStateError::hub)?;
+
+        // Verify the cosigned roster - critical security check!
+        // The hub could have returned a tampered roster with extra nodes.
+        verify_roster(
+            &cosigned_roster,
+            self.registration().node_number,
+            &signing_key.public_key_spki(),
+        )
+        .map_err(NodeStateError::RosterVerificationFailed)?;
 
         Ok(ActivatedNode {
             signing_key,

@@ -9,6 +9,7 @@ pub enum NodeStateError<StoreError> {
     InvalidPairingCode(crate::crypto::PairingCodeError),
     MacVerificationFailed,
     MissingEndorserResponse,
+    RosterVerificationFailed(crate::roster::RosterVerificationError),
 }
 
 impl<StoreError> NodeStateError<StoreError> {
@@ -31,6 +32,9 @@ impl<StoreError: fmt::Display> fmt::Display for NodeStateError<StoreError> {
             NodeStateError::InvalidPairingCode(err) => write!(f, "invalid pairing code: {err}"),
             NodeStateError::MacVerificationFailed => write!(f, "MAC verification failed"),
             NodeStateError::MissingEndorserResponse => write!(f, "missing endorser response"),
+            NodeStateError::RosterVerificationFailed(err) => {
+                write!(f, "roster verification failed: {err}")
+            }
         }
     }
 }
