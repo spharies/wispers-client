@@ -441,11 +441,17 @@ impl ServingSession {
     ) -> bool {
         use sha2::{Digest, Sha256};
 
-        // Reconstruct base roster: clone, remove new node, remove last addendum
+        // Reconstruct base roster
         let mut base_roster = new_roster.clone();
 
-        // Remove the new node
-        base_roster.nodes.retain(|n| n.node_number != new_node_number);
+        if activation_payload.base_version == 0 {
+            // Bootstrap case: base roster version 0 is completely empty
+            // Both endorser and new node are added in the first roster
+            base_roster.nodes.clear();
+        } else {
+            // Normal activation: only remove the new node
+            base_roster.nodes.retain(|n| n.node_number != new_node_number);
+        }
 
         // Remove the last addendum (the activation we're being asked to sign)
         base_roster.addenda.pop();
