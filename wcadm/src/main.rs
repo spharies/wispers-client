@@ -175,7 +175,7 @@ struct GroupResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NodeResponse {
-    id: String,
+    node_number: i32,
     name: Option<String>,
     last_seen_at: Option<String>,
     created_at: String,
@@ -213,7 +213,7 @@ fn show_group(client: &Client, base_url: &str, api_key: &str, group_id: &str) ->
                 .last_seen_at
                 .as_deref()
                 .unwrap_or("never");
-            println!("    {} - {} (last seen: {})", node.id, name, last_seen);
+            println!("    {} - {} (last seen: {})", node.node_number, name, last_seen);
         }
     }
 
