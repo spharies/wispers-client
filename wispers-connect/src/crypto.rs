@@ -7,6 +7,7 @@ use hmac::{Hmac, Mac};
 use num_bigint::BigUint;
 use rand::RngCore;
 use sha2::Sha256;
+use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -51,6 +52,37 @@ impl SigningKeyPair {
     /// Sign a message.
     pub fn sign(&self, message: &[u8]) -> Vec<u8> {
         self.signing_key.sign(message).to_bytes().to_vec()
+    }
+}
+
+/// X25519 key exchange keypair derived from the root key.
+#[derive(Clone)]
+pub struct X25519KeyPair {
+    secret: X25519StaticSecret,
+}
+
+impl X25519KeyPair {
+    /// Derive an X25519 keypair from the root key using HKDF.
+    pub fn derive_from_root_key(root_key: &[u8; 32]) -> Self {
+        let hk = Hkdf::<Sha256>::new(Some(b"wispers-connect-v1"), root_key);
+        let mut x25519_seed = [0u8; 32];
+        hk.expand(b"x25519-key", &mut x25519_seed)
+            .expect("32 bytes is valid for HKDF-SHA256");
+
+        let secret = X25519StaticSecret::from(x25519_seed);
+        Self { secret }
+    }
+
+    /// Get the public key as raw bytes.
+    pub fn public_key(&self) -> [u8; 32] {
+        X25519PublicKey::from(&self.secret).to_bytes()
+    }
+
+    /// Perform Diffie-Hellman key exchange with a peer's public key.
+    /// Returns the shared secret.
+    pub fn diffie_hellman(&self, peer_public: &[u8; 32]) -> [u8; 32] {
+        let peer_public = X25519PublicKey::from(*peer_public);
+        self.secret.diffie_hellman(&peer_public).to_bytes()
     }
 }
 

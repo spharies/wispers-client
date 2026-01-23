@@ -240,6 +240,9 @@ impl ServingSession {
             Some(proto::serving_request::Kind::RosterCosignRequest(req)) => {
                 self.handle_roster_cosign_request(request.request_id, req).await;
             }
+            Some(proto::serving_request::Kind::StartConnectionRequest(req)) => {
+                self.handle_start_connection_request(request.request_id, req).await;
+            }
             None => {
                 println!("  Unknown request kind");
             }
@@ -476,6 +479,25 @@ impl ServingSession {
 
         println!("  Base version hash verified");
         true
+    }
+
+    async fn handle_start_connection_request(
+        &mut self,
+        request_id: i64,
+        req: proto::StartConnectionRequest,
+    ) {
+        println!(
+            "  StartConnectionRequest from node (caller), answerer_node={}",
+            req.answerer_node_number
+        );
+        // TODO: Phase 1.3 - Implement P2P connection handling
+        // 1. Verify caller's signature against roster
+        // 2. Create IceAnswerer with caller's SDP
+        // 3. Generate connection_id
+        // 4. Send StartConnectionResponse with our SDP
+        // 5. Complete ICE negotiation
+        // 6. Send P2pConnection to incoming_rx channel
+        self.send_error_response(request_id, "P2P connections not yet implemented").await;
     }
 
     async fn send_error_response(&mut self, request_id: i64, error: &str) {

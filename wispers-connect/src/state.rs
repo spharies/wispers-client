@@ -1,4 +1,4 @@
-use crate::crypto::{generate_nonce, PairingCode, SigningKeyPair};
+use crate::crypto::{generate_nonce, PairingCode, SigningKeyPair, X25519KeyPair};
 use crate::errors::NodeStateError;
 use crate::hub::proto;
 use crate::roster::{
@@ -134,7 +134,9 @@ impl<S: NodeStateStore> NodeStorage<S> {
             .any(|n| n.node_number == registration.node_number);
 
         if is_activated {
-            let signing_key = SigningKeyPair::derive_from_root_key(state.root_key.as_bytes());
+            let root_key = state.root_key.as_bytes();
+            let signing_key = SigningKeyPair::derive_from_root_key(root_key);
+            let x25519_key = X25519KeyPair::derive_from_root_key(root_key);
 
             // Verify the roster cryptographically before trusting it
             verify_roster(
@@ -146,6 +148,7 @@ impl<S: NodeStateStore> NodeStorage<S> {
 
             Ok(NodeStateStage::Activated(ActivatedNode {
                 signing_key,
+                x25519_key,
                 roster,
                 registration: registration.clone(),
                 store: self.store.clone(),
@@ -519,8 +522,12 @@ impl<S: NodeStateStore> RegisteredNodeState<S> {
         )
         .map_err(NodeStateError::RosterVerificationFailed)?;
 
+        // Derive X25519 key for P2P connections
+        let x25519_key = X25519KeyPair::derive_from_root_key(self.state.root_key.as_bytes());
+
         Ok(ActivatedNode {
             signing_key,
+            x25519_key,
             roster: cosigned_roster,
             registration: self.registration().clone(),
             store: self.store.clone(),
@@ -534,6 +541,7 @@ impl<S: NodeStateStore> RegisteredNodeState<S> {
 /// An activated node that is in the roster and ready to operate.
 pub struct ActivatedNode<S: NodeStateStore> {
     signing_key: SigningKeyPair,
+    x25519_key: X25519KeyPair,
     roster: proto::connect::roster::Roster,
     registration: NodeRegistration,
     store: SharedStore<S>,
@@ -600,6 +608,77 @@ impl<S: NodeStateStore> ActivatedNode<S> {
         start_serving_impl(&hub_addr, self.signing_key.clone(), &self.registration)
             .await
             .map_err(NodeStateError::hub)
+    }
+
+    /// Connect to a peer node.
+    ///
+    /// This establishes a P2P connection to the specified peer using ICE for
+    /// NAT traversal. The connection is encrypted using X25519 key exchange.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let conn = activated.connect_to(42).await?;
+    /// conn.send(b"hello").await?;
+    /// let response = conn.recv().await?;
+    /// ```
+    pub async fn connect_to(
+        &self,
+        peer_node_number: i32,
+    ) -> Result<crate::p2p::P2pConnection, crate::p2p::P2pError> {
+        use crate::hub::HubClient;
+        use crate::p2p::{P2pConnection, P2pError};
+
+        let hub_addr = self.config.read().unwrap().hub_addr.clone();
+
+        // Connect to hub
+        let mut client = HubClient::connect(&hub_addr).await?;
+
+        // Get STUN/TURN configuration
+        let _stun_turn_config = client
+            .get_stun_turn_config(&self.registration)
+            .await?;
+
+        // TODO Phase 2: Use stun_turn_config to create ICE agent and gather candidates
+        // For now, use a placeholder SDP
+        let caller_sdp = "placeholder-sdp".to_string();
+
+        // Build the StartConnectionRequest
+        // Sign: answerer_node_number || caller_x25519_public_key || caller_sdp
+        let mut message_to_sign = Vec::new();
+        message_to_sign.extend_from_slice(&peer_node_number.to_le_bytes());
+        message_to_sign.extend_from_slice(&self.x25519_key.public_key());
+        message_to_sign.extend_from_slice(caller_sdp.as_bytes());
+        let signature = self.signing_key.sign(&message_to_sign);
+
+        let request = proto::StartConnectionRequest {
+            answerer_node_number: peer_node_number,
+            caller_x25519_public_key: self.x25519_key.public_key().to_vec(),
+            caller_sdp,
+            signature,
+        };
+
+        // Send to hub, which forwards to the answerer
+        let response = client
+            .start_connection(&self.registration, request)
+            .await?;
+
+        // TODO: Verify answerer's signature against roster
+        // For now, just extract the shared secret
+        let peer_x25519_public: [u8; 32] = response
+            .answerer_x25519_public_key
+            .try_into()
+            .map_err(|_| P2pError::SignatureVerificationFailed)?;
+
+        let shared_secret = self.x25519_key.diffie_hellman(&peer_x25519_public);
+
+        // TODO Phase 2: Use response.answerer_sdp to complete ICE negotiation
+        // For now, return a connection that will fail on send/recv
+
+        Ok(P2pConnection::new(
+            peer_node_number,
+            response.connection_id,
+            shared_secret,
+        ))
     }
 }
 

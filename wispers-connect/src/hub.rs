@@ -167,6 +167,35 @@ impl HubClient {
             request_stream,
         })
     }
+
+    /// Get STUN/TURN server configuration for P2P connections.
+    ///
+    /// Returns the server addresses and optional TURN credentials.
+    pub async fn get_stun_turn_config(
+        &mut self,
+        registration: &NodeRegistration,
+    ) -> Result<proto::StunTurnConfig, HubError> {
+        let mut request = tonic::Request::new(proto::StunTurnConfigRequest {});
+        add_auth_metadata(request.metadata_mut(), registration)?;
+
+        let response = self.client.get_stun_turn_config(request).await?;
+        Ok(response.into_inner())
+    }
+
+    /// Start a P2P connection to another node.
+    ///
+    /// The hub forwards this request to the target node and returns their response.
+    pub async fn start_connection(
+        &mut self,
+        registration: &NodeRegistration,
+        request: proto::StartConnectionRequest,
+    ) -> Result<proto::StartConnectionResponse, HubError> {
+        let mut grpc_request = tonic::Request::new(request);
+        add_auth_metadata(grpc_request.metadata_mut(), registration)?;
+
+        let response = self.client.start_connection(grpc_request).await?;
+        Ok(response.into_inner())
+    }
 }
 
 /// A bidirectional serving connection to the hub.

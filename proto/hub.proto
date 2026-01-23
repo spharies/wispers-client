@@ -31,8 +31,9 @@ service Hub {
   // responses back.
   rpc StartServing(stream ServingResponse) returns (stream ServingRequest) {}
 
-  // TODO:
-  // - Connect two nodes (STUN/TURN)
+  // Peer-to-peer connection establishment.
+  rpc GetStunTurnConfig(StunTurnConfigRequest) returns (StunTurnConfig) {}
+  rpc StartConnection(StartConnectionRequest) returns (StartConnectionResponse) {}
 
 }
 
@@ -118,6 +119,7 @@ message ServingRequest {
     Welcome welcome = 10;
     PairNodesMessage pair_nodes_message = 11;
     RosterCosignRequest roster_cosign_request = 12;
+    StartConnectionRequest start_connection_request = 13;
   }
 }
 
@@ -128,5 +130,37 @@ message ServingResponse {
   oneof kind {
     PairNodesMessage pair_nodes_message = 10;
     RosterCosignResponse roster_cosign_response = 11;
+    StartConnectionResponse start_connection_response = 12;
   }
+}
+
+//-- Peer-to-peer connection ---------------------------------------------------
+
+message StunTurnConfigRequest {
+  // Empty - credentials are generated per-call
+}
+
+message StunTurnConfig {
+  string stun_server = 1;       // e.g., "stun.wispers.dev:3478"
+  string turn_server = 2;       // e.g., "turn.wispers.dev:3478"
+  string turn_username = 3;     // TURN auth username
+  string turn_password = 4;     // TURN auth password
+  int64 expires_at_millis = 5;  // When TURN credentials expire
+}
+
+// Sent by caller to initiate a P2P connection.
+// Hub forwards to answerer via StartServing stream.
+message StartConnectionRequest {
+  int32 answerer_node_number = 1;
+  bytes caller_x25519_public_key = 2;
+  string caller_sdp = 3;        // ICE candidates + ufrag/pwd (opaque from libjuice)
+  bytes signature = 4;          // Ed25519 signature over fields 1-3
+}
+
+// Returned by answerer, forwarded back to caller.
+message StartConnectionResponse {
+  int64 connection_id = 1;              // Answerer-generated, for tracking
+  bytes answerer_x25519_public_key = 2;
+  string answerer_sdp = 3;
+  bytes signature = 4;                  // Ed25519 signature over fields 1-3
 }
