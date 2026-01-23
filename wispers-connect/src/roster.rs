@@ -462,10 +462,173 @@ fn verify_base_hash(
 }
 
 /// Compute the SHA256 hash of a roster for version verification.
-fn compute_roster_hash(roster: &Roster) -> Vec<u8> {
+pub fn compute_roster_hash(roster: &Roster) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(roster.encode_to_vec());
     hasher.finalize().to_vec()
+}
+
+//-- Roster builders -----------------------------------------------------------
+//
+// These functions create new roster versions. They're used by state.rs for
+// activation/revocation and by tests to verify that built rosters pass
+// verification.
+
+/// Create a bootstrap roster (version 1) with two founding nodes.
+///
+/// During bootstrap, both nodes are added simultaneously. The new_node signs
+/// the activation payload; the endorser_signature is left empty to be filled
+/// by the hub after obtaining the endorser's signature.
+///
+/// Returns the roster and the activation payload bytes (for signing).
+pub fn create_bootstrap_roster(
+    endorser_node_number: i32,
+    endorser_public_key: &[u8],
+    new_node_number: i32,
+    new_node_public_key: &[u8],
+    new_node_nonce: Vec<u8>,
+    endorser_nonce: Vec<u8>,
+    new_node_signature: Vec<u8>,
+) -> Roster {
+    let payload = roster::activation::Payload {
+        base_version: 0,
+        base_version_hash: compute_roster_hash(&Roster::default()),
+        new_version: 1,
+        new_node_number,
+        endorser_node_number,
+        new_node_nonce,
+        endorser_nonce,
+    };
+
+    Roster {
+        version: 1,
+        nodes: vec![
+            roster::Node {
+                node_number: endorser_node_number,
+                public_key_spki: endorser_public_key.to_vec(),
+                revoked: false,
+            },
+            roster::Node {
+                node_number: new_node_number,
+                public_key_spki: new_node_public_key.to_vec(),
+                revoked: false,
+            },
+        ],
+        addenda: vec![roster::Addendum {
+            kind: Some(addendum::Kind::Activation(roster::Activation {
+                payload: Some(payload),
+                new_node_signature,
+                endorser_signature: vec![], // Filled by hub
+            })),
+        }],
+    }
+}
+
+/// Create an activation roster for adding a node to an existing roster.
+///
+/// The new_node signs the activation payload; the endorser_signature is left
+/// empty to be filled by the hub after obtaining the endorser's signature.
+pub fn create_activation_roster(
+    base_roster: &Roster,
+    endorser_node_number: i32,
+    new_node_number: i32,
+    new_node_public_key: &[u8],
+    new_node_nonce: Vec<u8>,
+    endorser_nonce: Vec<u8>,
+    new_node_signature: Vec<u8>,
+) -> Roster {
+    let base_version = base_roster.version;
+    let base_version_hash = compute_roster_hash(base_roster);
+    let new_version = base_version + 1;
+
+    let payload = roster::activation::Payload {
+        base_version,
+        base_version_hash,
+        new_version,
+        new_node_number,
+        endorser_node_number,
+        new_node_nonce,
+        endorser_nonce,
+    };
+
+    let mut new_roster = base_roster.clone();
+    new_roster.version = new_version;
+    new_roster.nodes.push(roster::Node {
+        node_number: new_node_number,
+        public_key_spki: new_node_public_key.to_vec(),
+        revoked: false,
+    });
+    new_roster.addenda.push(roster::Addendum {
+        kind: Some(addendum::Kind::Activation(roster::Activation {
+            payload: Some(payload),
+            new_node_signature,
+            endorser_signature: vec![], // Filled by hub
+        })),
+    });
+
+    new_roster
+}
+
+/// Build the activation payload for signing.
+///
+/// This is used to create the payload that both the new node and endorser sign.
+pub fn build_activation_payload(
+    base_roster: &Roster,
+    endorser_node_number: i32,
+    new_node_number: i32,
+    new_node_nonce: Vec<u8>,
+    endorser_nonce: Vec<u8>,
+) -> roster::activation::Payload {
+    roster::activation::Payload {
+        base_version: base_roster.version,
+        base_version_hash: compute_roster_hash(base_roster),
+        new_version: base_roster.version + 1,
+        new_node_number,
+        endorser_node_number,
+        new_node_nonce,
+        endorser_nonce,
+    }
+}
+
+/// Create a revocation roster.
+pub fn create_revocation_roster(
+    base_roster: &Roster,
+    revoked_node_number: i32,
+    revoker_node_number: i32,
+    revoker_signature: Vec<u8>,
+) -> Roster {
+    let base_version = base_roster.version;
+    let base_version_hash = compute_roster_hash(base_roster);
+    let new_version = base_version + 1;
+
+    let payload = roster::revocation::Payload {
+        base_version,
+        base_version_hash,
+        new_version,
+        revoked_node_number,
+        revoker_node_number,
+    };
+
+    let mut new_roster = base_roster.clone();
+    new_roster.version = new_version;
+
+    // Mark the node as revoked
+    if let Some(node) = new_roster
+        .nodes
+        .iter_mut()
+        .find(|n| n.node_number == revoked_node_number)
+    {
+        node.revoked = true;
+    }
+
+    new_roster.addenda.push(roster::Addendum {
+        kind: Some(addendum::Kind::Revocation(roster::Revocation {
+            payload: Some(payload),
+            revoker_signature,
+        })),
+    });
+
+    new_roster
 }
 
 #[cfg(test)]
@@ -1154,5 +1317,133 @@ mod tests {
         // Revoked node 1 should fail to verify
         let result = verify_roster(&roster, 1, &spki(&keys[1]));
         assert!(matches!(result, Err(RosterVerificationError::VerifierRevoked(1))));
+    }
+
+    // ==================== Public builder tests ====================
+    // These verify that the public builder functions produce valid rosters.
+
+    #[test]
+    fn test_create_bootstrap_roster_verifies() {
+        let key_a = generate_key();
+        let key_b = generate_key();
+        let payload = super::build_activation_payload(
+            &Roster::default(),
+            1,
+            2,
+            b"new_node_nonce".to_vec(),
+            b"endorser_nonce".to_vec(),
+        );
+        let payload_bytes = payload.encode_to_vec();
+
+        // Create roster with both signatures (simulating what hub does)
+        let mut roster = super::create_bootstrap_roster(
+            1,
+            &spki(&key_a),
+            2,
+            &spki(&key_b),
+            payload.new_node_nonce.clone(),
+            payload.endorser_nonce.clone(),
+            sign(&key_b, &payload_bytes),
+        );
+
+        // Fill in endorser signature (normally done by hub)
+        if let Some(addendum::Kind::Activation(activation)) =
+            roster.addenda[0].kind.as_mut()
+        {
+            activation.endorser_signature = sign(&key_a, &payload_bytes);
+        }
+
+        // Should verify from either node's perspective
+        let result = verify_roster(&roster, 1, &spki(&key_a));
+        assert!(result.is_ok(), "Bootstrap roster should verify from node 1: {:?}", result);
+
+        let result = verify_roster(&roster, 2, &spki(&key_b));
+        assert!(result.is_ok(), "Bootstrap roster should verify from node 2: {:?}", result);
+    }
+
+    #[test]
+    fn test_create_activation_roster_verifies() {
+        let key_a = generate_key();
+        let key_b = generate_key();
+        let key_c = generate_key();
+
+        // Start with a valid bootstrap roster
+        let base_roster = build_bootstrap_roster(&key_a, 1, &key_b, 2);
+
+        // Build activation payload for adding node 3
+        let payload = super::build_activation_payload(
+            &base_roster,
+            1,  // endorser
+            3,  // new node
+            b"new_node_nonce".to_vec(),
+            b"endorser_nonce".to_vec(),
+        );
+        let payload_bytes = payload.encode_to_vec();
+
+        // Create activation roster
+        let mut roster = super::create_activation_roster(
+            &base_roster,
+            1,
+            3,
+            &spki(&key_c),
+            payload.new_node_nonce.clone(),
+            payload.endorser_nonce.clone(),
+            sign(&key_c, &payload_bytes),
+        );
+
+        // Fill in endorser signature
+        if let Some(addendum::Kind::Activation(activation)) =
+            roster.addenda.last_mut().and_then(|a| a.kind.as_mut())
+        {
+            activation.endorser_signature = sign(&key_a, &payload_bytes);
+        }
+
+        // Should verify from any node's perspective
+        let result = verify_roster(&roster, 1, &spki(&key_a));
+        assert!(result.is_ok(), "Activation roster should verify from node 1: {:?}", result);
+
+        let result = verify_roster(&roster, 3, &spki(&key_c));
+        assert!(result.is_ok(), "Activation roster should verify from node 3: {:?}", result);
+    }
+
+    #[test]
+    fn test_create_revocation_roster_verifies() {
+        let key_a = generate_key();
+        let key_b = generate_key();
+        let key_c = generate_key();
+
+        // Start with a 3-node roster
+        let mut base_roster = build_bootstrap_roster(&key_a, 1, &key_b, 2);
+        add_node(&mut base_roster, &key_c, 3, &key_a, 1);
+
+        // Build revocation payload
+        let base_hash = super::compute_roster_hash(&base_roster);
+        let revocation_payload = roster::revocation::Payload {
+            base_version: base_roster.version,
+            base_version_hash: base_hash,
+            new_version: base_roster.version + 1,
+            revoked_node_number: 2,
+            revoker_node_number: 1,
+        };
+        let payload_bytes = revocation_payload.encode_to_vec();
+
+        // Create revocation roster
+        let roster = super::create_revocation_roster(
+            &base_roster,
+            2,  // revoked
+            1,  // revoker
+            sign(&key_a, &payload_bytes),
+        );
+
+        // Should verify from active nodes' perspective
+        let result = verify_roster(&roster, 1, &spki(&key_a));
+        assert!(result.is_ok(), "Revocation roster should verify from node 1: {:?}", result);
+
+        let result = verify_roster(&roster, 3, &spki(&key_c));
+        assert!(result.is_ok(), "Revocation roster should verify from node 3: {:?}", result);
+
+        // Revoked node 2 should fail
+        let result = verify_roster(&roster, 2, &spki(&key_b));
+        assert!(matches!(result, Err(RosterVerificationError::VerifierRevoked(2))));
     }
 }

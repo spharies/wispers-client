@@ -1,6 +1,9 @@
 use crate::crypto::{generate_nonce, PairingCode, SigningKeyPair};
 use crate::errors::NodeStateError;
 use crate::hub::proto;
+use crate::roster::{
+    build_activation_payload, create_activation_roster, create_bootstrap_roster,
+};
 use crate::storage::{NodeStateStore, SharedStore};
 use crate::types::{AppNamespace, NodeRegistration, NodeState, ProfileNamespace};
 use prost::Message;
@@ -445,50 +448,41 @@ impl<S: NodeStateStore> RegisteredNodeState<S> {
             .await
             .map_err(NodeStateError::hub)?;
 
-        // Build the activation addendum
-        let base_version = current_roster.version;
-        let base_version_hash = compute_roster_hash(&current_roster);
-        let new_version = base_version + 1;
-
-        let activation_payload = proto::connect::roster::activation::Payload {
-            base_version,
-            base_version_hash,
-            new_version,
-            new_node_number: self.registration().node_number,
+        // Build and sign the activation payload
+        let activation_payload = build_activation_payload(
+            &current_roster,
             endorser_node_number,
-            new_node_nonce: nonce,
+            self.registration().node_number,
+            nonce,
             endorser_nonce,
-        };
+        );
         let activation_payload_bytes = activation_payload.encode_to_vec();
         let new_node_signature = signing_key.sign(&activation_payload_bytes);
 
-        let activation = proto::connect::roster::Activation {
-            payload: Some(activation_payload),
-            new_node_signature,
-            endorser_signature: vec![], // Hub will get this from the endorser
+        // Build the new roster using the appropriate builder
+        let new_roster = if current_roster.version == 0 {
+            // Bootstrap: create version 1 roster with both nodes
+            create_bootstrap_roster(
+                endorser_node_number,
+                &response_payload.public_key_spki,
+                self.registration().node_number,
+                &signing_key.public_key_spki(),
+                activation_payload.new_node_nonce,
+                activation_payload.endorser_nonce,
+                new_node_signature,
+            )
+        } else {
+            // Normal activation: add new node to existing roster
+            create_activation_roster(
+                &current_roster,
+                endorser_node_number,
+                self.registration().node_number,
+                &signing_key.public_key_spki(),
+                activation_payload.new_node_nonce,
+                activation_payload.endorser_nonce,
+                new_node_signature,
+            )
         };
-
-        // Build the new roster
-        let mut new_roster = current_roster.clone();
-        new_roster.version = new_version;
-
-        // For bootstrap (base_version == 0), add both nodes
-        if base_version == 0 {
-            new_roster.nodes.push(proto::connect::roster::Node {
-                node_number: endorser_node_number,
-                public_key_spki: response_payload.public_key_spki.clone(),
-                revoked: false,
-            });
-        }
-
-        new_roster.nodes.push(proto::connect::roster::Node {
-            node_number: self.registration().node_number,
-            public_key_spki: signing_key.public_key_spki(),
-            revoked: false,
-        });
-        new_roster.addenda.push(proto::connect::roster::Addendum {
-            kind: Some(proto::connect::roster::addendum::Kind::Activation(activation)),
-        });
 
         // Submit the roster update
         let cosigned_roster = client
@@ -600,14 +594,6 @@ async fn start_serving_impl(
     );
 
     Ok((handle, session))
-}
-
-/// Compute a hash of the roster for version verification.
-fn compute_roster_hash(roster: &proto::connect::roster::Roster) -> Vec<u8> {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(roster.encode_to_vec());
-    hasher.finalize().to_vec()
 }
 
 #[cfg(test)]
