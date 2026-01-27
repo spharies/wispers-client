@@ -379,7 +379,7 @@ impl<S: NodeStateStore> RegisteredNodeState<S> {
         (
             crate::serving::ServingHandle,
             crate::serving::ServingSession,
-            Option<tokio::sync::mpsc::Receiver<crate::p2p::UdpConnectionAnswerer>>,
+            Option<crate::serving::IncomingConnections>,
         ),
         NodeStateError<S::Error>,
     > {
@@ -617,9 +617,10 @@ impl<S: NodeStateStore> ActivatedNode<S> {
     /// let (handle, session, incoming_rx) = activated.start_serving().await?;
     /// tokio::spawn(async move { session.run().await });
     /// // Handle incoming P2P connections
-    /// while let Some(conn) = incoming_rx.recv().await {
-    ///     conn.connect().await?; // Complete ICE
-    ///     // ... use conn
+    /// while let Some(Ok(conn)) = incoming.quic.recv().await {
+    ///     // conn is already connected, ready to use
+    ///     let stream = conn.accept_stream().await?;
+    ///     // ... use stream
     /// }
     /// ```
     pub async fn start_serving(
@@ -628,7 +629,7 @@ impl<S: NodeStateStore> ActivatedNode<S> {
         (
             crate::serving::ServingHandle,
             crate::serving::ServingSession,
-            Option<tokio::sync::mpsc::Receiver<crate::p2p::UdpConnectionAnswerer>>,
+            Option<crate::serving::IncomingConnections>,
         ),
         NodeStateError<S::Error>,
     > {
@@ -772,7 +773,7 @@ async fn start_serving_impl(
     (
         crate::serving::ServingHandle,
         crate::serving::ServingSession,
-        Option<tokio::sync::mpsc::Receiver<crate::p2p::UdpConnectionAnswerer>>,
+        Option<crate::serving::IncomingConnections>,
     ),
     crate::hub::HubError,
 > {
@@ -782,7 +783,7 @@ async fn start_serving_impl(
     let mut client = HubClient::connect(hub_addr).await?;
     let conn = client.start_serving(registration).await?;
 
-    let (handle, session, incoming_rx) = ServingSession::new(
+    let (handle, session, incoming) = ServingSession::new(
         conn,
         signing_key,
         registration.connectivity_group_id.clone(),
@@ -790,7 +791,7 @@ async fn start_serving_impl(
         p2p_config,
     );
 
-    Ok((handle, session, incoming_rx))
+    Ok((handle, session, incoming))
 }
 
 #[cfg(test)]

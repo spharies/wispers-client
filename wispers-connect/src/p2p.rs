@@ -425,9 +425,9 @@ impl QuicConnection {
 
 /// A pending QUIC connection (answerer side, pre-handshake).
 ///
-/// This is created when an incoming connection requests QUIC transport.
-/// Call `connect()` to complete the ICE and QUIC handshakes.
-pub struct QuicConnectionPending {
+/// This is an internal type used by the serving layer. Users receive
+/// fully-connected `QuicConnection` instances via the incoming channel.
+pub(crate) struct QuicConnectionPending {
     /// The peer's node number (the caller).
     pub peer_node_number: i32,
 

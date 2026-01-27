@@ -436,10 +436,9 @@ async fn logout(hub_override: Option<&str>) -> Result<()> {
 async fn serve(hub_override: Option<&str>) -> Result<()> {
     use std::sync::Arc;
     use tokio::sync::RwLock;
-    use wispers_connect::p2p::UdpConnectionAnswerer;
-    use wispers_connect::{ServingHandle, ServingSession};
-
-    type IncomingRx = Option<tokio::sync::mpsc::Receiver<UdpConnectionAnswerer>>;
+    use wispers_connect::p2p::{P2pError, UdpConnectionAnswerer};
+    use wispers_connect::{IncomingConnections, QuicConnection, ServingHandle, ServingSession};
+    type IncomingResult = Option<IncomingConnections>;
 
     let storage = get_storage(hub_override)?;
     let stage = storage
@@ -480,7 +479,7 @@ async fn serve(hub_override: Option<&str>) -> Result<()> {
     // Spawn hub connection in background
     let connect_handle_state = handle_state.clone();
     let mut connect_task = tokio::spawn(async move {
-        let result: Result<(ServingHandle, ServingSession, IncomingRx), anyhow::Error> = match stage {
+        let result: Result<(ServingHandle, ServingSession, IncomingResult), anyhow::Error> = match stage {
             NodeStateStage::Pending(_) => unreachable!(),
             NodeStateStage::Registered(r) => {
                 r.start_serving()
@@ -504,8 +503,9 @@ async fn serve(hub_override: Option<&str>) -> Result<()> {
 
     // Session task (None until hub connects)
     let mut session_task: Option<tokio::task::JoinHandle<Result<(), wispers_connect::ServingError>>> = None;
-    // Incoming P2P connections receiver (None until hub connects, stays None for Registered state)
-    let mut incoming_rx: IncomingRx = None;
+    // Incoming P2P connections receivers (None until hub connects, stays None for Registered state)
+    let mut incoming_udp_rx: Option<tokio::sync::mpsc::Receiver<UdpConnectionAnswerer>> = None;
+    let mut incoming_quic_rx: Option<tokio::sync::mpsc::Receiver<Result<QuicConnection, P2pError>>> = None;
 
     // Accept daemon client connections, handle hub connection completing
     loop {
@@ -513,12 +513,13 @@ async fn serve(hub_override: Option<&str>) -> Result<()> {
             // Hub connection completed
             result = &mut connect_task, if session_task.is_none() => {
                 match result {
-                    Ok(Ok((handle, session, rx))) => {
+                    Ok(Ok((handle, session, incoming))) => {
                         println!("Connected to hub");
                         *handle_state.write().await = Some(handle);
                         session_task = Some(tokio::spawn(async move { session.run().await }));
-                        incoming_rx = rx;
-                        if incoming_rx.is_some() {
+                        if let Some(inc) = incoming {
+                            incoming_udp_rx = Some(inc.udp);
+                            incoming_quic_rx = Some(inc.quic);
                             println!("P2P connections enabled (activated node)");
                         }
                     }
@@ -547,15 +548,33 @@ async fn serve(hub_override: Option<&str>) -> Result<()> {
                 }
             }
 
-            // Incoming P2P connection
+            // Incoming UDP P2P connection
             Some(conn) = async {
-                match incoming_rx.as_mut() {
+                match incoming_udp_rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => {
-                println!("Incoming P2P connection from node {}", conn.peer_node_number);
-                tokio::spawn(handle_p2p_connection(conn));
+                println!("Incoming UDP P2P connection from node {}", conn.peer_node_number);
+                tokio::spawn(handle_udp_connection(conn));
+            }
+
+            // Incoming QUIC P2P connection
+            Some(result) = async {
+                match incoming_quic_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match result {
+                    Ok(conn) => {
+                        println!("Incoming QUIC P2P connection from node {}", conn.peer_node_number);
+                        tokio::spawn(handle_quic_connection(conn));
+                    }
+                    Err(e) => {
+                        eprintln!("QUIC connection handshake failed: {}", e);
+                    }
+                }
             }
 
             // New daemon client connection
@@ -578,16 +597,16 @@ async fn serve(hub_override: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Handle an incoming P2P connection (respond to pings).
-async fn handle_p2p_connection(conn: wispers_connect::p2p::UdpConnectionAnswerer) {
+/// Handle an incoming UDP P2P connection (respond to pings).
+async fn handle_udp_connection(conn: wispers_connect::p2p::UdpConnectionAnswerer) {
     let peer = conn.peer_node_number;
 
     // Complete ICE negotiation
     if let Err(e) = conn.connect().await {
-        eprintln!("  P2P ICE failed for node {}: {}", peer, e);
+        eprintln!("  UDP ICE failed for node {}: {}", peer, e);
         return;
     }
-    println!("  P2P connected to node {}", peer);
+    println!("  UDP connected to node {}", peer);
 
     // Handle messages
     loop {
@@ -604,7 +623,49 @@ async fn handle_p2p_connection(conn: wispers_connect::p2p::UdpConnectionAnswerer
                 }
             }
             Err(e) => {
-                println!("  P2P connection to node {} closed: {}", peer, e);
+                println!("  UDP connection to node {} closed: {}", peer, e);
+                break;
+            }
+        }
+    }
+}
+
+/// Handle an incoming QUIC P2P connection (respond to stream pings).
+async fn handle_quic_connection(conn: wispers_connect::QuicConnection) {
+    let peer = conn.peer_node_number;
+    println!("  QUIC connected to node {} (connection already established)", peer);
+
+    // Accept streams and respond to pings
+    loop {
+        match conn.accept_stream().await {
+            Ok(stream) => {
+                println!("  Accepted stream {} from node {}", stream.id(), peer);
+
+                // Read message
+                let mut buf = [0u8; 1024];
+                match stream.read(&mut buf).await {
+                    Ok(0) => {
+                        println!("  Stream {} closed by peer", stream.id());
+                    }
+                    Ok(n) => {
+                        let data = &buf[..n];
+                        if data == b"ping" {
+                            println!("  Received ping on stream {}, sending pong", stream.id());
+                            if let Err(e) = stream.write_all(b"pong").await {
+                                eprintln!("  Failed to send pong: {}", e);
+                            }
+                            let _ = stream.finish().await;
+                        } else {
+                            println!("  Received {} bytes on stream {}", n, stream.id());
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("  Stream read error: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                println!("  QUIC connection to node {} closed: {}", peer, e);
                 break;
             }
         }
