@@ -72,7 +72,7 @@ pub enum P2pError {
 ///
 /// This provides encrypted UDP communication with a peer node after
 /// successful ICE negotiation.
-pub struct P2pConnection {
+pub struct DatagramConnection {
     /// The peer's node number.
     pub peer_node_number: i32,
 
@@ -86,7 +86,7 @@ pub struct P2pConnection {
     cipher: P2pCipher,
 }
 
-impl P2pConnection {
+impl DatagramConnection {
     /// Create a new P2P connection (internal use).
     pub(crate) fn new(
         peer_node_number: i32,
@@ -144,7 +144,7 @@ impl P2pConnection {
 }
 
 /// A peer-to-peer connection to another node (answerer side).
-pub struct P2pConnectionAnswerer {
+pub struct DatagramConnectionAnswerer {
     /// The peer's node number (the caller).
     pub peer_node_number: i32,
 
@@ -158,7 +158,7 @@ pub struct P2pConnectionAnswerer {
     cipher: P2pCipher,
 }
 
-impl P2pConnectionAnswerer {
+impl DatagramConnectionAnswerer {
     /// Create a new P2P connection answerer (internal use).
     pub(crate) fn new(
         peer_node_number: i32,
