@@ -436,8 +436,8 @@ async fn logout(hub_override: Option<&str>) -> Result<()> {
 async fn serve(hub_override: Option<&str>) -> Result<()> {
     use std::sync::Arc;
     use tokio::sync::RwLock;
-    use wispers_connect::p2p::{P2pError, UdpConnectionAnswerer};
-    use wispers_connect::{IncomingConnections, QuicConnection, ServingHandle, ServingSession};
+    use wispers_connect::p2p::P2pError;
+    use wispers_connect::{IncomingConnections, QuicConnection, UdpConnection, ServingHandle, ServingSession};
     type IncomingResult = Option<IncomingConnections>;
 
     let storage = get_storage(hub_override)?;
@@ -504,7 +504,7 @@ async fn serve(hub_override: Option<&str>) -> Result<()> {
     // Session task (None until hub connects)
     let mut session_task: Option<tokio::task::JoinHandle<Result<(), wispers_connect::ServingError>>> = None;
     // Incoming P2P connections receivers (None until hub connects, stays None for Registered state)
-    let mut incoming_udp_rx: Option<tokio::sync::mpsc::Receiver<UdpConnectionAnswerer>> = None;
+    let mut incoming_udp_rx: Option<tokio::sync::mpsc::Receiver<Result<UdpConnection, P2pError>>> = None;
     let mut incoming_quic_rx: Option<tokio::sync::mpsc::Receiver<Result<QuicConnection, P2pError>>> = None;
 
     // Accept daemon client connections, handle hub connection completing
@@ -549,14 +549,21 @@ async fn serve(hub_override: Option<&str>) -> Result<()> {
             }
 
             // Incoming UDP P2P connection
-            Some(conn) = async {
+            Some(result) = async {
                 match incoming_udp_rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => {
-                println!("Incoming UDP P2P connection from node {}", conn.peer_node_number);
-                tokio::spawn(handle_udp_connection(conn));
+                match result {
+                    Ok(conn) => {
+                        println!("Incoming UDP P2P connection from node {}", conn.peer_node_number);
+                        tokio::spawn(handle_udp_connection(conn));
+                    }
+                    Err(e) => {
+                        eprintln!("UDP connection failed: {}", e);
+                    }
+                }
             }
 
             // Incoming QUIC P2P connection
@@ -598,15 +605,9 @@ async fn serve(hub_override: Option<&str>) -> Result<()> {
 }
 
 /// Handle an incoming UDP P2P connection (respond to pings).
-async fn handle_udp_connection(conn: wispers_connect::p2p::UdpConnectionAnswerer) {
+async fn handle_udp_connection(conn: wispers_connect::UdpConnection) {
     let peer = conn.peer_node_number;
-
-    // Complete ICE negotiation
-    if let Err(e) = conn.connect().await {
-        eprintln!("  UDP ICE failed for node {}: {}", peer, e);
-        return;
-    }
-    println!("  UDP connected to node {}", peer);
+    println!("  UDP connected to node {} (connection already established)", peer);
 
     // Handle messages
     loop {

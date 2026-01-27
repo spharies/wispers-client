@@ -10,7 +10,7 @@ use crate::crypto::{generate_nonce, PairingCode, PairingSecret, SigningKeyPair, 
 use crate::hub::proto;
 use crate::hub::ServingConnection;
 use crate::ice::IceAnswerer;
-use crate::p2p::{P2pError, QuicConnection, UdpConnectionAnswerer};
+use crate::p2p::{P2pError, QuicConnection, UdpConnection};
 use crate::types::ConnectivityGroupId;
 use ed25519_dalek::pkcs8::DecodePublicKey;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -130,16 +130,19 @@ pub struct ServingSession {
     pending_endorsement: Option<PendingEndorsement>,
     // P2P state (only for activated nodes)
     p2p_config: Option<P2pConfig>,
-    incoming_udp_tx: Option<mpsc::Sender<UdpConnectionAnswerer>>,
+    incoming_udp_tx: Option<mpsc::Sender<Result<UdpConnection, P2pError>>>,
     incoming_quic_tx: Option<mpsc::Sender<Result<QuicConnection, P2pError>>>,
     connection_id_counter: AtomicI64,
 }
 
 /// Receivers for incoming P2P connections.
+///
+/// Both channels yield `Result` to report ICE/handshake errors.
+/// Connections are fully established when received.
 pub struct IncomingConnections {
     /// UDP connections (raw encrypted datagrams).
-    pub udp: mpsc::Receiver<UdpConnectionAnswerer>,
-    /// QUIC connections (reliable streams). Yields Result to report handshake errors.
+    pub udp: mpsc::Receiver<Result<UdpConnection, P2pError>>,
+    /// QUIC connections (reliable streams).
     pub quic: mpsc::Receiver<Result<QuicConnection, P2pError>>,
 }
 
@@ -678,27 +681,29 @@ impl ServingSession {
         let transport = req.transport();
         match transport {
             proto::Transport::Datagram => {
-                // UDP: Create answerer and deliver to channel
-                // The receiver should call connect() to complete ICE
-                let p2p_conn = match UdpConnectionAnswerer::new(
-                    caller_node_number,
-                    connection_id,
-                    ice_answerer,
-                    shared_secret,
-                ) {
-                    Ok(conn) => conn,
-                    Err(e) => {
-                        eprintln!("  Failed to create UdpConnectionAnswerer: {}", e);
-                        return;
-                    }
-                };
+                // UDP: Spawn a task to complete ICE
+                // The channel receives a fully-connected UdpConnection (or error)
+                if let Some(tx) = self.incoming_udp_tx.clone() {
+                    tokio::spawn(async move {
+                        println!("  Starting UDP ICE for connection_id={}", connection_id);
+                        let result = UdpConnection::connect_answerer(
+                            caller_node_number,
+                            connection_id,
+                            ice_answerer,
+                            shared_secret,
+                        )
+                        .await;
 
-                if let Some(tx) = &self.incoming_udp_tx {
-                    if let Err(e) = tx.send(p2p_conn).await {
-                        eprintln!("  Failed to deliver incoming UDP connection: {}", e);
-                    } else {
-                        println!("  Delivered incoming UDP connection to channel");
-                    }
+                        match &result {
+                            Ok(_) => println!("  UDP ICE completed for connection_id={}", connection_id),
+                            Err(e) => eprintln!("  UDP ICE failed for connection_id={}: {}", connection_id, e),
+                        }
+
+                        if let Err(e) = tx.send(result).await {
+                            eprintln!("  Failed to deliver incoming UDP connection: {}", e);
+                        }
+                    });
+                    println!("  Spawned UDP ICE task");
                 }
             }
             proto::Transport::Stream => {

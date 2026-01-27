@@ -728,7 +728,7 @@ impl<S: NodeStateStore> ActivatedNode<S> {
         // Complete ICE connection with answerer's SDP
         ice_caller.connect(&response.answerer_sdp).await?;
 
-        UdpConnection::new(
+        UdpConnection::new_caller(
             peer_node_number,
             response.connection_id,
             ice_caller,
