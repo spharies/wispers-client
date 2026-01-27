@@ -1,13 +1,17 @@
 //! Peer-to-peer connection types.
 //!
 //! This module provides the types for establishing and managing P2P connections
-//! between activated nodes.
+//! between activated nodes. Two transport types are supported:
+//!
+//! - **Datagram**: Raw UDP with AES-GCM encryption. Low overhead, unreliable delivery.
+//! - **Stream**: QUIC streams with TLS-PSK. Reliable, ordered delivery with flow control.
 
 use thiserror::Error;
 
 use crate::encryption::{EncryptionError, P2pCipher};
 use crate::ice::{IceAnswerer, IceCaller, IceError};
 use crate::juice::State as IceState;
+use crate::quic::{self, QuicConnection, QuicError, QuicStream};
 
 /// Connection state for a P2P connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +61,9 @@ pub enum P2pError {
 
     #[error("encryption error: {0}")]
     Encryption(#[from] EncryptionError),
+
+    #[error("QUIC error: {0}")]
+    Quic(#[from] QuicError),
 
     #[error("peer rejected connection: {0}")]
     PeerRejected(String),
@@ -216,6 +223,71 @@ impl DatagramConnectionAnswerer {
     /// Returns true if the connection is established and ready for data.
     pub fn is_connected(&self) -> bool {
         self.state().is_connected()
+    }
+}
+
+//-- Stream connections (QUIC) ---------------------------------------------------------------------
+
+/// A stream-based P2P connection to another node (caller side).
+///
+/// This provides QUIC streams for reliable, ordered communication with a peer
+/// node. Unlike `DatagramConnection`, streams provide flow control and
+/// automatic retransmission.
+pub struct StreamConnection {
+    /// The peer's node number.
+    pub peer_node_number: i32,
+
+    /// Connection ID assigned by the answerer.
+    pub connection_id: i64,
+
+    /// The underlying QUIC connection.
+    quic: QuicConnection<IceCaller>,
+}
+
+impl StreamConnection {
+    /// Create and establish a new stream connection (internal use).
+    ///
+    /// This creates the QUIC connection and performs the handshake.
+    /// Returns a fully-established connection ready for stream operations.
+    pub(crate) async fn connect(
+        peer_node_number: i32,
+        connection_id: i64,
+        ice: IceCaller,
+        shared_secret: [u8; 32],
+    ) -> Result<Self, P2pError> {
+        let psk = quic::derive_psk(&shared_secret);
+        let quic = QuicConnection::new_caller(ice, psk, connection_id)?;
+        quic.handshake().await?;
+        Ok(Self {
+            peer_node_number,
+            connection_id,
+            quic,
+        })
+    }
+
+    /// Open a new bidirectional stream.
+    ///
+    /// Returns a stream that can be used for reading and writing data.
+    pub async fn open_stream(&self) -> Result<QuicStream<IceCaller>, P2pError> {
+        Ok(self.quic.open_stream().await?)
+    }
+
+    /// Accept an incoming stream from the peer.
+    ///
+    /// Waits for the peer to open a new stream and returns it.
+    pub async fn accept_stream(&self) -> Result<QuicStream<IceCaller>, P2pError> {
+        Ok(self.quic.accept_stream().await?)
+    }
+
+    /// Check if the QUIC connection is established.
+    pub async fn is_established(&self) -> bool {
+        self.quic.is_established().await
+    }
+
+    /// Close the connection.
+    pub async fn close(self) -> Result<(), P2pError> {
+        self.quic.close().await?;
+        Ok(())
     }
 }
 
