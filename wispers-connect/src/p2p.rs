@@ -291,5 +291,105 @@ impl StreamConnection {
     }
 }
 
+/// A stream-based P2P connection answerer (answerer/server side).
+///
+/// This is created when an incoming connection requests stream transport.
+/// Call `connect()` to complete the ICE and QUIC handshakes.
+pub struct StreamConnectionAnswerer {
+    /// The peer's node number (the caller).
+    pub peer_node_number: i32,
+
+    /// Connection ID we assigned.
+    pub connection_id: i64,
+
+    /// The underlying ICE connection (not yet fully connected).
+    ice: IceAnswerer,
+
+    /// Pre-computed PSK for QUIC handshake.
+    psk: [u8; 32],
+}
+
+impl StreamConnectionAnswerer {
+    /// Create a new stream connection answerer (internal use).
+    ///
+    /// The ICE answerer should already have the remote SDP set.
+    /// Call `connect()` to complete the connection.
+    pub(crate) fn new(
+        peer_node_number: i32,
+        connection_id: i64,
+        ice: IceAnswerer,
+        shared_secret: [u8; 32],
+    ) -> Self {
+        let psk = quic::derive_psk(&shared_secret);
+        Self {
+            peer_node_number,
+            connection_id,
+            ice,
+            psk,
+        }
+    }
+
+    /// Complete the ICE and QUIC handshakes.
+    ///
+    /// This waits for ICE to connect, then performs the QUIC handshake.
+    /// Returns a fully-established connection ready for stream operations.
+    pub async fn connect(self) -> Result<StreamConnectionAnswered, P2pError> {
+        // Wait for ICE connection
+        self.ice.connect().await?;
+
+        // Create QUIC connection and handshake
+        let quic = QuicConnection::new_answerer(self.ice, self.psk, self.connection_id)?;
+        quic.handshake().await?;
+
+        Ok(StreamConnectionAnswered {
+            peer_node_number: self.peer_node_number,
+            connection_id: self.connection_id,
+            quic,
+        })
+    }
+}
+
+/// A fully-established stream connection (answerer/server side).
+///
+/// This is returned by `StreamConnectionAnswerer::connect()` after the
+/// ICE and QUIC handshakes complete.
+pub struct StreamConnectionAnswered {
+    /// The peer's node number (the caller).
+    pub peer_node_number: i32,
+
+    /// Connection ID we assigned.
+    pub connection_id: i64,
+
+    /// The underlying QUIC connection.
+    quic: QuicConnection<IceAnswerer>,
+}
+
+impl StreamConnectionAnswered {
+    /// Open a new bidirectional stream.
+    ///
+    /// Returns a stream that can be used for reading and writing data.
+    pub async fn open_stream(&self) -> Result<QuicStream<IceAnswerer>, P2pError> {
+        Ok(self.quic.open_stream().await?)
+    }
+
+    /// Accept an incoming stream from the peer.
+    ///
+    /// Waits for the peer to open a new stream and returns it.
+    pub async fn accept_stream(&self) -> Result<QuicStream<IceAnswerer>, P2pError> {
+        Ok(self.quic.accept_stream().await?)
+    }
+
+    /// Check if the QUIC connection is established.
+    pub async fn is_established(&self) -> bool {
+        self.quic.is_established().await
+    }
+
+    /// Close the connection.
+    pub async fn close(self) -> Result<(), P2pError> {
+        self.quic.close().await?;
+        Ok(())
+    }
+}
+
 /// Re-export StunTurnConfig from proto.
 pub use crate::hub::proto::StunTurnConfig;
