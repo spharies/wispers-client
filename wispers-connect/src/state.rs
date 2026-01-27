@@ -705,6 +705,7 @@ impl<S: NodeStateStore> ActivatedNode<S> {
             caller_sdp,
             signature,
             stun_turn_config: Some(stun_turn_config),
+            transport: proto::Transport::Datagram.into(),
         };
 
         // Send to hub, which forwards to the answerer

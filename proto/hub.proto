@@ -137,6 +137,12 @@ message ServingResponse {
 
 //-- Peer-to-peer connection ---------------------------------------------------
 
+// Transport type for P2P connections.
+enum Transport {
+  TRANSPORT_DATAGRAM = 0;  // Raw UDP with AES-GCM encryption
+  TRANSPORT_STREAM = 1;    // QUIC streams with TLS-PSK
+}
+
 message StunTurnConfigRequest {
   // Empty - credentials are generated per-call
 }
@@ -157,6 +163,7 @@ message StartConnectionRequest {
   string caller_sdp = 3;        // ICE candidates + ufrag/pwd (opaque from libjuice)
   bytes signature = 4;          // Ed25519 signature over fields 1-3
   StunTurnConfig stun_turn_config = 5;  // Config used by caller; answerer must use same
+  Transport transport = 6;      // Requested transport type
 }
 
 // Returned by answerer, forwarded back to caller.
