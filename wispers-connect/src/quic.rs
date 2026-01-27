@@ -363,27 +363,39 @@ impl IceTransport for IceAnswerer {
     }
 }
 
-/// Generate a random QUIC connection ID.
-fn generate_conn_id() -> quiche::ConnectionId<'static> {
-    let mut id = [0u8; 16];
-    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut id);
-    quiche::ConnectionId::from_vec(id.to_vec())
+/// Convert a Wispers connection ID to a QUIC connection ID.
+///
+/// Uses the i64 connection ID bytes directly as the QUIC source connection ID.
+fn conn_id_from_i64(id: i64) -> quiche::ConnectionId<'static> {
+    quiche::ConnectionId::from_vec(id.to_be_bytes().to_vec())
 }
 
 // Convenience constructors for specific ICE transport types
 
 impl QuicConnection<IceCaller> {
     /// Create a QUIC connection as the caller (client role).
-    pub fn new_caller(transport: IceCaller, psk: [u8; PSK_LEN]) -> Result<Self, QuicError> {
-        let scid = generate_conn_id();
+    ///
+    /// The `connection_id` should be from the `StartConnectionResponse`.
+    pub fn new_caller(
+        transport: IceCaller,
+        psk: [u8; PSK_LEN],
+        connection_id: i64,
+    ) -> Result<Self, QuicError> {
+        let scid = conn_id_from_i64(connection_id);
         Self::new_inner(transport, psk, QuicRole::Client, scid)
     }
 }
 
 impl QuicConnection<IceAnswerer> {
     /// Create a QUIC connection as the answerer (server role).
-    pub fn new_answerer(transport: IceAnswerer, psk: [u8; PSK_LEN]) -> Result<Self, QuicError> {
-        let scid = generate_conn_id();
+    ///
+    /// The `connection_id` is the one generated for `StartConnectionResponse`.
+    pub fn new_answerer(
+        transport: IceAnswerer,
+        psk: [u8; PSK_LEN],
+        connection_id: i64,
+    ) -> Result<Self, QuicError> {
+        let scid = conn_id_from_i64(connection_id);
         Self::new_inner(transport, psk, QuicRole::Server, scid)
     }
 }
