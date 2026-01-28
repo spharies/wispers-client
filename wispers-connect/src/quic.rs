@@ -7,7 +7,13 @@
 //! A background driver task handles packet I/O and timeouts, allowing the
 //! application to perform long-running operations without stalling the connection.
 
+use boring::ec::{EcGroup, EcKey};
+use boring::hash::MessageDigest;
+use boring::nid::Nid;
+use boring::pkey::PKey;
 use boring::ssl::{SslContextBuilder, SslMethod};
+use boring::x509::extension::{BasicConstraints, SubjectKeyIdentifier};
+use boring::x509::{X509Builder, X509NameBuilder};
 use hkdf::Hkdf;
 use sha2::Sha256;
 use std::net::SocketAddr;
@@ -128,6 +134,64 @@ pub fn create_config(psk: [u8; PSK_LEN], role: QuicRole) -> Result<quiche::Confi
 
                 Ok(PSK_LEN)
             });
+
+            // BoringSSL requires server to have a certificate even for PSK mode.
+            // Generate a minimal self-signed certificate in memory.
+            let group =
+                EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+            let ec_key = EcKey::generate(&group).map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+            let pkey = PKey::from_ec_key(ec_key).map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+
+            let mut name_builder = X509NameBuilder::new().map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+            name_builder
+                .append_entry_by_text("CN", "wispers-connect")
+                .map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+            let name = name_builder.build();
+
+            let mut cert_builder = X509Builder::new().map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+            cert_builder
+                .set_version(2)
+                .map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+            cert_builder
+                .set_subject_name(&name)
+                .map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+            cert_builder
+                .set_issuer_name(&name)
+                .map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+            cert_builder
+                .set_pubkey(&pkey)
+                .map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+            cert_builder
+                .set_not_before(boring::asn1::Asn1Time::days_from_now(0).unwrap().as_ref())
+                .map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+            cert_builder
+                .set_not_after(boring::asn1::Asn1Time::days_from_now(365).unwrap().as_ref())
+                .map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+
+            let basic_constraints = BasicConstraints::new().critical().ca().build().unwrap();
+            cert_builder
+                .append_extension(basic_constraints)
+                .map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+
+            let subject_key_id = SubjectKeyIdentifier::new()
+                .build(&cert_builder.x509v3_context(None, None))
+                .unwrap();
+            cert_builder
+                .append_extension(subject_key_id)
+                .map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+
+            cert_builder
+                .sign(&pkey, MessageDigest::sha256())
+                .map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+
+            let cert = cert_builder.build();
+
+            ssl_ctx
+                .set_private_key(&pkey)
+                .map_err(|e| QuicConfigError::Tls(e.to_string()))?;
+            ssl_ctx
+                .set_certificate(&cert)
+                .map_err(|e| QuicConfigError::Tls(e.to_string()))?;
         }
     }
 
