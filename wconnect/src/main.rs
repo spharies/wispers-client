@@ -2,6 +2,8 @@ mod daemon;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use wispers_connect::{FileNodeStateStore, NodeStateStage, NodeStorage};
 
 #[derive(Parser)]
@@ -712,9 +714,79 @@ async fn handle_quic_stream(stream: wispers_connect::QuicStream, _peer: i32, str
 
 /// Handle a FORWARD command - connect to local port and relay.
 async fn handle_forward(stream: wispers_connect::QuicStream, port: u16) {
-    // TODO: Implement in Phase 1.3
-    let _ = stream.write_all(b"ERROR not implemented\n").await;
-    let _ = stream.finish().await;
+    use std::sync::Arc;
+
+    let stream = Arc::new(stream);
+
+    // Connect to localhost:port
+    let tcp = match TcpStream::connect(format!("127.0.0.1:{}", port)).await {
+        Ok(tcp) => {
+            if let Err(e) = stream.write_all(b"OK\n").await {
+                eprintln!("  Failed to send OK: {}", e);
+                return;
+            }
+            tcp
+        }
+        Err(e) => {
+            let msg = format!("ERROR {}\n", e);
+            let _ = stream.write_all(msg.as_bytes()).await;
+            let _ = stream.finish().await;
+            return;
+        }
+    };
+
+    let (mut tcp_read, mut tcp_write) = tcp.into_split();
+
+    // Relay: QUIC stream <-> TCP socket
+    // We need two concurrent tasks: one for each direction
+
+    let stream_read = Arc::clone(&stream);
+    let stream_write = Arc::clone(&stream);
+
+    // QUIC -> TCP
+    let quic_to_tcp = async move {
+        let mut buf = [0u8; 8192];
+        loop {
+            match stream_read.read(&mut buf).await {
+                Ok(0) => break, // QUIC stream finished
+                Ok(n) => {
+                    if let Err(e) = tcp_write.write_all(&buf[..n]).await {
+                        eprintln!("  TCP write error: {}", e);
+                        break;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("  QUIC read error: {}", e);
+                    break;
+                }
+            }
+        }
+        let _ = tcp_write.shutdown().await;
+    };
+
+    // TCP -> QUIC
+    let tcp_to_quic = async move {
+        let mut buf = [0u8; 8192];
+        loop {
+            match tcp_read.read(&mut buf).await {
+                Ok(0) => break, // TCP connection closed
+                Ok(n) => {
+                    if let Err(e) = stream_write.write_all(&buf[..n]).await {
+                        eprintln!("  QUIC write error: {}", e);
+                        break;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("  TCP read error: {}", e);
+                    break;
+                }
+            }
+        }
+        let _ = stream_write.finish().await;
+    };
+
+    // Run both directions concurrently
+    tokio::join!(quic_to_tcp, tcp_to_quic);
 }
 
 async fn get_pairing_code(hub_override: Option<&str>) -> Result<()> {
