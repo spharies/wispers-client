@@ -311,7 +311,7 @@ impl QuicConnection {
         shared_secret: [u8; 32],
     ) -> Result<Self, P2pError> {
         let psk = quic::derive_psk(&shared_secret);
-        let quic = quic::Connection::new_caller(ice, psk, connection_id)?;
+        let quic = quic::Connection::new_caller(ice, psk, connection_id).await?;
         quic.handshake().await?;
         Ok(Self {
             peer_node_number,
@@ -335,7 +335,7 @@ impl QuicConnection {
 
         // Create QUIC connection and handshake
         let psk = quic::derive_psk(&shared_secret);
-        let quic = quic::Connection::new_answerer(ice, psk, connection_id)?;
+        let quic = quic::Connection::new_answerer(ice, psk, connection_id).await?;
         quic.handshake().await?;
 
         Ok(Self {

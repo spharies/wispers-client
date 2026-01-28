@@ -270,36 +270,87 @@ pub struct Connection<T: IceTransport + 'static> {
 }
 
 impl<T: IceTransport + 'static> Connection<T> {
-    /// Create a new QUIC connection and start the background driver.
+    /// Create a new QUIC client connection and start the background driver.
     ///
-    /// The ICE connection must already be established before calling this.
-    fn new_inner(
+    /// Sends the Initial packet immediately after creating the connection.
+    async fn new_client(
         transport: T,
         psk: [u8; PSK_LEN],
-        role: QuicRole,
         scid: quiche::ConnectionId<'static>,
     ) -> Result<Self, QuicError> {
-        let mut config = create_config(psk, role)?;
+        let mut config = create_config(psk, QuicRole::Client)?;
 
-        // Placeholder addresses - we're using ICE for actual transport,
-        // these are just required by quiche's API
+        // Placeholder addresses - we're using ICE for actual transport
         let local: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let peer: SocketAddr = "127.0.0.1:1".parse().unwrap();
 
-        let conn = match role {
-            QuicRole::Client => quiche::connect(None, &scid, local, peer, &mut config)?,
-            QuicRole::Server => quiche::accept(&scid, None, local, peer, &mut config)?,
-        };
+        let conn = quiche::connect(None, &scid, local, peer, &mut config)?;
 
         let inner = Arc::new(ConnectionInner {
             conn: Mutex::new(Box::pin(conn)),
             transport,
-            role,
+            role: QuicRole::Client,
             local_addr: local,
             peer_addr: peer,
             state_notify: Notify::new(),
             shutdown: AtomicBool::new(false),
         });
+
+        // Send Initial packet immediately (don't wait for driver)
+        inner.flush_send().await?;
+
+        // Spawn the background driver
+        let driver_inner = Arc::clone(&inner);
+        let driver_handle = tokio::spawn(async move {
+            driver_loop(driver_inner).await;
+        });
+
+        Ok(Self {
+            inner,
+            driver_handle,
+        })
+    }
+
+    /// Create a new QUIC server connection and start the background driver.
+    ///
+    /// Waits for the client's Initial packet, extracts connection IDs,
+    /// then creates the server connection and processes the packet.
+    async fn new_server(
+        transport: T,
+        psk: [u8; PSK_LEN],
+        scid: quiche::ConnectionId<'static>,
+    ) -> Result<Self, QuicError> {
+        let mut config = create_config(psk, QuicRole::Server)?;
+
+        // Wait for the first packet from the client
+        let mut initial_packet = transport.recv().await?;
+
+        // Parse the header to extract connection IDs
+        let header = quiche::Header::from_slice(&mut initial_packet, quiche::MAX_CONN_ID_LEN)
+            .map_err(QuicError::Quic)?;
+
+        // Placeholder addresses - we're using ICE for actual transport
+        let local: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let peer: SocketAddr = "127.0.0.1:1".parse().unwrap();
+
+        // Create server connection with the client's DCID as odcid
+        let conn = quiche::accept(&scid, Some(&header.dcid), local, peer, &mut config)?;
+
+        let inner = Arc::new(ConnectionInner {
+            conn: Mutex::new(Box::pin(conn)),
+            transport,
+            role: QuicRole::Server,
+            local_addr: local,
+            peer_addr: peer,
+            state_notify: Notify::new(),
+            shutdown: AtomicBool::new(false),
+        });
+
+        // Process the initial packet we already received
+        inner.process_packet(initial_packet).await?;
+
+        // Flush response immediately (don't wait for driver)
+        inner.flush_send().await?;
 
         // Spawn the background driver
         let driver_inner = Arc::clone(&inner);
@@ -670,13 +721,14 @@ impl Connection<IceCaller> {
     ///
     /// The `connection_id` should be from the `StartConnectionResponse`.
     /// This starts a background driver task that handles packet I/O.
-    pub fn new_caller(
+    /// Sends the Initial packet immediately.
+    pub async fn new_caller(
         transport: IceCaller,
         psk: [u8; PSK_LEN],
         connection_id: i64,
     ) -> Result<Self, QuicError> {
         let scid = conn_id_from_i64(connection_id);
-        Self::new_inner(transport, psk, QuicRole::Client, scid)
+        Self::new_client(transport, psk, scid).await
     }
 }
 
@@ -685,13 +737,14 @@ impl Connection<IceAnswerer> {
     ///
     /// The `connection_id` is the one generated for `StartConnectionResponse`.
     /// This starts a background driver task that handles packet I/O.
-    pub fn new_answerer(
+    /// Waits for the client's Initial packet before returning.
+    pub async fn new_answerer(
         transport: IceAnswerer,
         psk: [u8; PSK_LEN],
         connection_id: i64,
     ) -> Result<Self, QuicError> {
         let scid = conn_id_from_i64(connection_id);
-        Self::new_inner(transport, psk, QuicRole::Server, scid)
+        Self::new_server(transport, psk, scid).await
     }
 }
 
