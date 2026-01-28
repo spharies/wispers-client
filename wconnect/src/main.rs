@@ -57,6 +57,17 @@ enum Command {
         #[arg(long)]
         quic: bool,
     },
+    /// Forward a local TCP port to a remote node
+    Forward {
+        /// Local port to listen on
+        local_port: u16,
+
+        /// Target node number
+        node: i32,
+
+        /// Remote port on target node
+        remote_port: u16,
+    },
 }
 
 /// Read registration info synchronously (for use before tokio starts).
@@ -169,6 +180,9 @@ async fn async_main(command: Command, hub_override: Option<String>) -> Result<()
         Command::Serve { daemon: _, stop: _ } => serve(hub_override).await,
         Command::GetPairingCode => get_pairing_code(hub_override).await,
         Command::Ping { node_number, quic } => ping(hub_override, node_number, quic).await,
+        Command::Forward { local_port, node, remote_port } => {
+            forward(hub_override, local_port, node, remote_port).await
+        }
     }
 }
 
@@ -952,4 +966,51 @@ async fn ping_quic<S: wispers_connect::NodeStateStore>(
     }
 
     Ok(())
+}
+
+async fn forward(
+    hub_override: Option<&str>,
+    local_port: u16,
+    target_node: i32,
+    remote_port: u16,
+) -> Result<()> {
+    // Validate ports
+    if local_port == 0 {
+        anyhow::bail!("Local port cannot be 0");
+    }
+    if remote_port == 0 {
+        anyhow::bail!("Remote port cannot be 0");
+    }
+
+    let storage = get_storage(hub_override)?;
+    let stage = storage
+        .restore_or_init_node_state("unused", None::<String>)
+        .await
+        .context("failed to load node state")?;
+
+    let activated = match stage {
+        NodeStateStage::Pending(_) => {
+            anyhow::bail!("Not registered. Use 'wconnect register <token>' first.");
+        }
+        NodeStateStage::Registered(_) => {
+            anyhow::bail!("Not activated. Use 'wconnect activate <pairing_code>' first.");
+        }
+        NodeStateStage::Activated(a) => a,
+    };
+
+    let our_node = activated.registration().node_number;
+    if target_node == our_node {
+        anyhow::bail!("Cannot forward to yourself (node {}).", our_node);
+    }
+
+    println!(
+        "Forwarding localhost:{} -> node {}:localhost:{}",
+        local_port, target_node, remote_port
+    );
+
+    // TODO: Phase 2.2 - bind local listener
+    // TODO: Phase 2.3 - connect QUIC
+    // TODO: Phase 2.4 - relay
+
+    anyhow::bail!("Not implemented yet");
 }
