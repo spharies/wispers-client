@@ -1015,7 +1015,18 @@ async fn forward(
 
     println!("Listening on 127.0.0.1:{}", local_port);
 
-    // TODO: Phase 2.3 - connect QUIC to target node (single connection, reused)
+    // Phase 2.3: Connect to target node via QUIC
+    print!("Connecting to node {}...", target_node);
+    std::io::Write::flush(&mut std::io::stdout())?;
+
+    let quic_conn = activated
+        .connect_quic(target_node)
+        .await
+        .context("failed to connect to target node")?;
+
+    println!(" connected");
+
+    let quic_conn = std::sync::Arc::new(quic_conn);
 
     // Accept incoming connections
     loop {
@@ -1026,8 +1037,52 @@ async fn forward(
 
         println!("Accepted connection from {}", peer_addr);
 
-        // TODO: Phase 2.3/2.4 - open QUIC stream and relay
-        // For now, just close the connection
+        let quic_conn = std::sync::Arc::clone(&quic_conn);
+        tokio::spawn(async move {
+            if let Err(e) = handle_forward_connection(tcp_stream, quic_conn, remote_port).await {
+                eprintln!("Forward error for {}: {}", peer_addr, e);
+            }
+        });
+    }
+}
+
+/// Handle a single forwarded TCP connection.
+async fn handle_forward_connection(
+    tcp_stream: tokio::net::TcpStream,
+    quic_conn: std::sync::Arc<wispers_connect::QuicConnection>,
+    remote_port: u16,
+) -> Result<()> {
+    // Open QUIC stream
+    let stream = quic_conn
+        .open_stream()
+        .await
+        .context("failed to open QUIC stream")?;
+
+    // Send FORWARD command
+    let cmd = format!("FORWARD {}\n", remote_port);
+    stream
+        .write_all(cmd.as_bytes())
+        .await
+        .context("failed to send FORWARD command")?;
+
+    // Wait for response
+    let mut buf = [0u8; 256];
+    let n = stream
+        .read(&mut buf)
+        .await
+        .context("failed to read response")?;
+
+    let response = String::from_utf8_lossy(&buf[..n]);
+    let response = response.trim();
+
+    if response == "OK" {
+        println!("  Stream {} forwarding to port {}", stream.id(), remote_port);
+        // TODO: Phase 2.4 - relay data
         drop(tcp_stream);
+        Ok(())
+    } else if response.starts_with("ERROR ") {
+        anyhow::bail!("Remote error: {}", &response[6..]);
+    } else {
+        anyhow::bail!("Unexpected response: {}", response);
     }
 }
