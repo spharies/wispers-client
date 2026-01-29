@@ -70,7 +70,7 @@ curl http://localhost:8080
 
 ### 2.4 Relay
 - [x] Bidirectional copy: TCP socket <-> QUIC stream
-- [ ] Handle EOF in both directions (half-close) - **partial, reload issue**
+- [x] Handle EOF in both directions (half-close)
 - [x] Clean shutdown on stream/socket close
 
 ---
@@ -117,3 +117,4 @@ curl http://localhost:8080
 - QUIC streams already provide reliable, ordered delivery - perfect for TCP forwarding
 - The session protocol is intentionally simple (line-based) for easy debugging
 - Half-close semantics: when TCP client closes write side, call `stream.finish()`
+- Bug fix: must track opened/accepted stream IDs to avoid reusing finished streams
