@@ -85,7 +85,7 @@ curl http://localhost:8080
 - [x] Connection refused on remote (server sends ERROR, client reports)
 - [x] Node not serving (connect_quic fails)
 - [x] QUIC connection failure (handled with context)
-- [ ] Timeout configuration (skipped for PoC)
+- [x] Keepalive to prevent idle timeout (PING every 15s)
 
 ### 3.3 Logging
 - [x] Log connection count on exit (Ctrl+C summary)
@@ -117,3 +117,4 @@ curl http://localhost:8080
 - The session protocol is intentionally simple (line-based) for easy debugging
 - Half-close semantics: when TCP client closes write side, call `stream.finish()`
 - Bug fix: must track opened/accepted stream IDs to avoid reusing finished streams
+- Keepalive: driver loop sends PING every 15s via `send_ack_eliciting()` to prevent idle timeout (30s)

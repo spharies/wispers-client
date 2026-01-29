@@ -37,6 +37,9 @@ const QUIC_VERSION: u32 = quiche::PROTOCOL_VERSION;
 /// Maximum idle timeout in milliseconds.
 const MAX_IDLE_TIMEOUT_MS: u64 = 30_000;
 
+/// Keepalive interval in milliseconds (should be less than idle timeout).
+const KEEPALIVE_INTERVAL_MS: u64 = 15_000;
+
 /// Initial max data (connection-level flow control).
 const INITIAL_MAX_DATA: u64 = 10_000_000; // 10 MB
 
@@ -312,6 +315,17 @@ impl<T: IceTransport> ConnectionInner<T> {
     async fn handle_timeout(&self) {
         let mut conn = self.conn.lock().await;
         conn.on_timeout();
+    }
+
+    /// Send a keepalive PING if the connection is established.
+    async fn send_keepalive(&self) -> Result<(), QuicError> {
+        {
+            let mut conn = self.conn.lock().await;
+            if conn.is_established() {
+                conn.send_ack_eliciting().map_err(QuicError::Quic)?;
+            }
+        }
+        self.flush_send().await
     }
 
     /// Get the current timeout duration.
@@ -607,6 +621,10 @@ impl<T: IceTransport + 'static> Drop for Connection<T> {
 
 /// Background driver loop that keeps the QUIC connection alive.
 async fn driver_loop<T: IceTransport>(inner: Arc<ConnectionInner<T>>) {
+    let mut keepalive_interval =
+        tokio::time::interval(std::time::Duration::from_millis(KEEPALIVE_INTERVAL_MS));
+    keepalive_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
     loop {
         // Check if we should stop
         if inner.shutdown.load(Ordering::SeqCst) {
@@ -614,7 +632,7 @@ async fn driver_loop<T: IceTransport>(inner: Arc<ConnectionInner<T>>) {
         }
 
         // Flush any pending outgoing packets
-        if let Err(_) = inner.flush_send().await {
+        if inner.flush_send().await.is_err() {
             break;
         }
 
@@ -626,44 +644,37 @@ async fn driver_loop<T: IceTransport>(inner: Arc<ConnectionInner<T>>) {
 
         // Get timeout for next event
         let timeout = inner.timeout().await;
+        let timeout_duration = timeout.unwrap_or(std::time::Duration::from_millis(100));
 
-        // Wait for incoming packet or timeout
-        let recv_result = if let Some(timeout_duration) = timeout {
-            match tokio::time::timeout(timeout_duration, inner.transport.recv()).await {
-                Ok(result) => Some(result),
-                Err(_) => None, // Timeout
-            }
-        } else {
-            // No timeout, use a reasonable default to avoid blocking forever
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(100),
-                inner.transport.recv(),
-            )
-            .await
-            {
-                Ok(result) => Some(result),
-                Err(_) => None,
-            }
-        };
-
-        match recv_result {
-            Some(Ok(packet)) => {
-                // Process the packet
-                if let Err(_) = inner.process_packet(packet).await {
-                    break;
+        // Wait for incoming packet, timeout, or keepalive tick
+        tokio::select! {
+            result = inner.transport.recv() => {
+                match result {
+                    Ok(packet) => {
+                        // Process the packet
+                        if inner.process_packet(packet).await.is_err() {
+                            break;
+                        }
+                        // Notify waiters that state may have changed
+                        inner.state_notify.notify_waiters();
+                    }
+                    Err(_) => {
+                        // ICE error, stop the driver
+                        break;
+                    }
                 }
-                // Notify waiters that state may have changed
-                inner.state_notify.notify_waiters();
             }
-            Some(Err(_)) => {
-                // ICE error, stop the driver
-                break;
-            }
-            None => {
+            _ = tokio::time::sleep(timeout_duration) => {
                 // Timeout - call on_timeout
                 inner.handle_timeout().await;
                 // Notify in case handshake progressed
                 inner.state_notify.notify_waiters();
+            }
+            _ = keepalive_interval.tick() => {
+                // Send keepalive PING to prevent idle timeout
+                if inner.send_keepalive().await.is_err() {
+                    break;
+                }
             }
         }
     }
