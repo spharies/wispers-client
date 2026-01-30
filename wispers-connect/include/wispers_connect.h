@@ -88,6 +88,20 @@ typedef void (*WispersActivatedCallback)(
 );
 
 //------------------------------------------------------------------------------
+// Registration info (returned by read_registration)
+//------------------------------------------------------------------------------
+
+// Registration information. Strings are owned and must be freed with wispers_string_free().
+typedef struct {
+    char *connectivity_group_id;  // Owned, free with wispers_string_free()
+    int32_t node_number;
+    char *auth_token;             // Owned, free with wispers_string_free()
+} WispersRegistrationInfo;
+
+// Free a registration info struct and its strings.
+void wispers_registration_info_free(WispersRegistrationInfo *info);
+
+//------------------------------------------------------------------------------
 // Storage lifecycle
 //------------------------------------------------------------------------------
 
@@ -95,9 +109,21 @@ WispersNodeStorageHandle *wispers_storage_new_in_memory(void);
 WispersNodeStorageHandle *wispers_storage_new_with_callbacks(const WispersNodeStateStoreCallbacks *callbacks);
 void wispers_storage_free(WispersNodeStorageHandle *handle);
 
+// Read registration from local storage (sync, no hub contact).
+// Returns SUCCESS with out_info populated if registered, NOT_FOUND if not registered.
+// Caller must free out_info with wispers_registration_info_free() on success.
+WispersStatus wispers_storage_read_registration(
+    WispersNodeStorageHandle *handle,
+    WispersRegistrationInfo *out_info
+);
+
+// Override the hub address (for testing).
+WispersStatus wispers_storage_override_hub_addr(
+    WispersNodeStorageHandle *handle,
+    const char *hub_addr
+);
+
 // TODO: wispers_storage_restore_or_init_async - Phase 3
-// TODO: wispers_storage_read_registration - Phase 2
-// TODO: wispers_storage_override_hub_addr - Phase 2
 
 //------------------------------------------------------------------------------
 // Pending state

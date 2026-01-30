@@ -138,6 +138,85 @@ static int test_handle_free_null(void) {
 }
 
 //------------------------------------------------------------------------------
+// Phase 2: Sync operations tests
+//------------------------------------------------------------------------------
+
+static int test_read_registration_not_found(void) {
+    TEST("read_registration returns NOT_FOUND for fresh storage");
+
+    WispersNodeStorageHandle *storage = wispers_storage_new_in_memory();
+    if (!storage) FAIL("failed to create storage");
+
+    WispersRegistrationInfo info;
+    WispersStatus status = wispers_storage_read_registration(storage, &info);
+
+    wispers_storage_free(storage);
+
+    if (status != WISPERS_STATUS_NOT_FOUND) FAIL("expected NOT_FOUND");
+
+    PASS();
+    return 0;
+}
+
+static int test_read_registration_null_params(void) {
+    TEST("read_registration handles NULL params");
+
+    WispersNodeStorageHandle *storage = wispers_storage_new_in_memory();
+    WispersRegistrationInfo info;
+
+    if (wispers_storage_read_registration(NULL, &info) != WISPERS_STATUS_NULL_POINTER)
+        FAIL("expected NULL_POINTER for NULL handle");
+
+    if (wispers_storage_read_registration(storage, NULL) != WISPERS_STATUS_NULL_POINTER)
+        FAIL("expected NULL_POINTER for NULL out_info");
+
+    wispers_storage_free(storage);
+    PASS();
+    return 0;
+}
+
+static int test_override_hub_addr(void) {
+    TEST("override_hub_addr");
+
+    WispersNodeStorageHandle *storage = wispers_storage_new_in_memory();
+    if (!storage) FAIL("failed to create storage");
+
+    WispersStatus status = wispers_storage_override_hub_addr(storage, "http://localhost:8080");
+    wispers_storage_free(storage);
+
+    if (status != WISPERS_STATUS_SUCCESS) FAIL("expected SUCCESS");
+
+    PASS();
+    return 0;
+}
+
+static int test_override_hub_addr_null_params(void) {
+    TEST("override_hub_addr handles NULL params");
+
+    WispersNodeStorageHandle *storage = wispers_storage_new_in_memory();
+
+    if (wispers_storage_override_hub_addr(NULL, "http://test") != WISPERS_STATUS_NULL_POINTER)
+        FAIL("expected NULL_POINTER for NULL handle");
+
+    if (wispers_storage_override_hub_addr(storage, NULL) != WISPERS_STATUS_NULL_POINTER)
+        FAIL("expected NULL_POINTER for NULL addr");
+
+    wispers_storage_free(storage);
+    PASS();
+    return 0;
+}
+
+static int test_registration_info_free_null(void) {
+    TEST("registration_info_free handles NULL");
+
+    // Should not crash
+    wispers_registration_info_free(NULL);
+
+    PASS();
+    return 0;
+}
+
+//------------------------------------------------------------------------------
 // Main
 //------------------------------------------------------------------------------
 
@@ -154,6 +233,14 @@ int main(void) {
     failures += test_storage_in_memory();
     failures += test_storage_free_null();
     failures += test_handle_free_null();
+
+    // Phase 2 tests
+    printf("\n-- Phase 2: Sync Operations --\n");
+    failures += test_read_registration_not_found();
+    failures += test_read_registration_null_params();
+    failures += test_override_hub_addr();
+    failures += test_override_hub_addr_null_params();
+    failures += test_registration_info_free_null();
 
     printf("\n");
     if (failures == 0) {
