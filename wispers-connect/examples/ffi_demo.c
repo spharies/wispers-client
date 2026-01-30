@@ -26,6 +26,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <sys/time.h>
+#include <stdatomic.h>
 
 //------------------------------------------------------------------------------
 // Constants and globals
@@ -42,7 +43,7 @@ static const char *g_hub_addr = NULL;
 
 // Wait for async callback with timeout (in milliseconds)
 #define WAIT_FOR_CALLBACK(ctx, timeout_ms) \
-    for (int _i = 0; _i < (timeout_ms) / 10 && !(ctx).called; _i++) { \
+    for (int _i = 0; _i < (timeout_ms) / 10 && !atomic_load(&(ctx).called); _i++) { \
         usleep(10000); \
     }
 
@@ -51,7 +52,7 @@ static const char *g_hub_addr = NULL;
 //------------------------------------------------------------------------------
 
 typedef struct {
-    int called;
+    atomic_int called;
     WispersStatus status;
     WispersStage stage;
     WispersPendingNodeHandle *pending;
@@ -60,19 +61,19 @@ typedef struct {
 } InitCtx;
 
 typedef struct {
-    int called;
+    atomic_int called;
     WispersStatus status;
     WispersRegisteredNodeHandle *registered;
 } RegisterCtx;
 
 typedef struct {
-    int called;
+    atomic_int called;
     WispersStatus status;
     WispersActivatedNodeHandle *activated;
 } ActivateCtx;
 
 typedef struct {
-    int called;
+    atomic_int called;
     WispersStatus status;
     WispersServingHandle *serving;
     WispersServingSession *session;
@@ -80,30 +81,30 @@ typedef struct {
 } ServingCtx;
 
 typedef struct {
-    int called;
+    atomic_int called;
     WispersStatus status;
     char *pairing_code;
 } PairingCodeCtx;
 
 typedef struct {
-    int called;
+    atomic_int called;
     WispersStatus status;
 } BasicCtx;
 
 typedef struct {
-    int called;
+    atomic_int called;
     WispersStatus status;
     WispersQuicConnectionHandle *connection;
 } QuicConnCtx;
 
 typedef struct {
-    int called;
+    atomic_int called;
     WispersStatus status;
     WispersQuicStreamHandle *stream;
 } QuicStreamCtx;
 
 typedef struct {
-    int called;
+    atomic_int called;
     WispersStatus status;
     const uint8_t *data;
     size_t len;
@@ -122,12 +123,12 @@ static void init_callback(
     WispersActivatedNodeHandle *activated
 ) {
     InitCtx *c = (InitCtx *)ctx;
-    c->called = 1;
     c->status = status;
     c->stage = stage;
     c->pending = pending;
     c->registered = registered;
     c->activated = activated;
+    atomic_store(&c->called, 1);
 }
 
 static void register_callback(
@@ -136,9 +137,9 @@ static void register_callback(
     WispersRegisteredNodeHandle *registered
 ) {
     RegisterCtx *c = (RegisterCtx *)ctx;
-    c->called = 1;
     c->status = status;
     c->registered = registered;
+    atomic_store(&c->called, 1);
 }
 
 static void activate_callback(
@@ -147,9 +148,9 @@ static void activate_callback(
     WispersActivatedNodeHandle *activated
 ) {
     ActivateCtx *c = (ActivateCtx *)ctx;
-    c->called = 1;
     c->status = status;
     c->activated = activated;
+    atomic_store(&c->called, 1);
 }
 
 static void serving_callback(
@@ -160,11 +161,11 @@ static void serving_callback(
     WispersIncomingConnections *incoming
 ) {
     ServingCtx *c = (ServingCtx *)ctx;
-    c->called = 1;
     c->status = status;
     c->serving = serving;
     c->session = session;
     c->incoming = incoming;
+    atomic_store(&c->called, 1);
 }
 
 static void pairing_code_callback(
@@ -173,15 +174,15 @@ static void pairing_code_callback(
     char *pairing_code
 ) {
     PairingCodeCtx *c = (PairingCodeCtx *)ctx;
-    c->called = 1;
     c->status = status;
     c->pairing_code = pairing_code;
+    atomic_store(&c->called, 1);
 }
 
 static void basic_callback(void *ctx, WispersStatus status) {
     BasicCtx *c = (BasicCtx *)ctx;
-    c->called = 1;
     c->status = status;
+    atomic_store(&c->called, 1);
 }
 
 static void quic_conn_callback(
@@ -190,9 +191,9 @@ static void quic_conn_callback(
     WispersQuicConnectionHandle *connection
 ) {
     QuicConnCtx *c = (QuicConnCtx *)ctx;
-    c->called = 1;
     c->status = status;
     c->connection = connection;
+    atomic_store(&c->called, 1);
 }
 
 static void quic_stream_callback(
@@ -201,9 +202,9 @@ static void quic_stream_callback(
     WispersQuicStreamHandle *stream
 ) {
     QuicStreamCtx *c = (QuicStreamCtx *)ctx;
-    c->called = 1;
     c->status = status;
     c->stream = stream;
+    atomic_store(&c->called, 1);
 }
 
 static void data_callback(
@@ -213,10 +214,10 @@ static void data_callback(
     size_t len
 ) {
     DataCtx *c = (DataCtx *)ctx;
-    c->called = 1;
     c->status = status;
     c->data = data;
     c->len = len;
+    atomic_store(&c->called, 1);
 }
 
 //------------------------------------------------------------------------------
@@ -455,7 +456,7 @@ static int cmd_status(void) {
 
     WAIT_FOR_CALLBACK(ctx, 5000);
 
-    if (!ctx.called) {
+    if (!atomic_load(&ctx.called)) {
         fprintf(stderr, "Timeout waiting for restore callback\n");
         wispers_storage_free(storage);
         free(storage_ctx);
@@ -532,9 +533,9 @@ static int cmd_register(const char *token) {
 
     WAIT_FOR_CALLBACK(init_ctx, 5000);
 
-    if (!init_ctx.called || init_ctx.status != WISPERS_STATUS_SUCCESS) {
+    if (!atomic_load(&init_ctx.called) || init_ctx.status != WISPERS_STATUS_SUCCESS) {
         fprintf(stderr, "Failed to restore state: %s\n",
-                init_ctx.called ? status_str(init_ctx.status) : "timeout");
+                atomic_load(&init_ctx.called) ? status_str(init_ctx.status) : "timeout");
         wispers_storage_free(storage);
         free(storage_ctx);
         return 1;
@@ -565,7 +566,7 @@ static int cmd_register(const char *token) {
     // Wait longer for hub communication
     WAIT_FOR_CALLBACK(reg_ctx, 30000);
 
-    if (!reg_ctx.called) {
+    if (!atomic_load(&reg_ctx.called)) {
         fprintf(stderr, "Timeout waiting for registration callback\n");
         wispers_storage_free(storage);
         free(storage_ctx);
@@ -615,9 +616,9 @@ static int cmd_activate(const char *pairing_code) {
 
     WAIT_FOR_CALLBACK(init_ctx, 5000);
 
-    if (!init_ctx.called || init_ctx.status != WISPERS_STATUS_SUCCESS) {
+    if (!atomic_load(&init_ctx.called) || init_ctx.status != WISPERS_STATUS_SUCCESS) {
         fprintf(stderr, "Failed to restore state: %s\n",
-                init_ctx.called ? status_str(init_ctx.status) : "timeout");
+                atomic_load(&init_ctx.called) ? status_str(init_ctx.status) : "timeout");
         wispers_storage_free(storage);
         free(storage_ctx);
         return 1;
@@ -654,7 +655,7 @@ static int cmd_activate(const char *pairing_code) {
     // Wait longer for activation (involves hub communication and potentially P2P)
     WAIT_FOR_CALLBACK(act_ctx, 60000);
 
-    if (!act_ctx.called) {
+    if (!atomic_load(&act_ctx.called)) {
         fprintf(stderr, "Timeout waiting for activation callback\n");
         wispers_storage_free(storage);
         free(storage_ctx);
@@ -696,9 +697,9 @@ static int cmd_serve(int print_pairing_code) {
 
     WAIT_FOR_CALLBACK(init_ctx, 5000);
 
-    if (!init_ctx.called || init_ctx.status != WISPERS_STATUS_SUCCESS) {
+    if (!atomic_load(&init_ctx.called) || init_ctx.status != WISPERS_STATUS_SUCCESS) {
         fprintf(stderr, "Failed to restore state: %s\n",
-                init_ctx.called ? status_str(init_ctx.status) : "timeout");
+                atomic_load(&init_ctx.called) ? status_str(init_ctx.status) : "timeout");
         wispers_storage_free(storage);
         free(storage_ctx);
         return 1;
@@ -735,7 +736,7 @@ static int cmd_serve(int print_pairing_code) {
     // Wait for serving to start
     WAIT_FOR_CALLBACK(serv_ctx, 30000);
 
-    if (!serv_ctx.called) {
+    if (!atomic_load(&serv_ctx.called)) {
         fprintf(stderr, "Timeout waiting for serving callback\n");
         if (init_ctx.registered) wispers_registered_node_free(init_ctx.registered);
         if (init_ctx.activated) wispers_activated_node_free(init_ctx.activated);
@@ -761,10 +762,10 @@ static int cmd_serve(int print_pairing_code) {
         status = wispers_serving_handle_generate_pairing_code_async(serv_ctx.serving, &pc_ctx, pairing_code_callback);
         if (status == WISPERS_STATUS_SUCCESS) {
             WAIT_FOR_CALLBACK(pc_ctx, 10000);
-            if (pc_ctx.called && pc_ctx.status == WISPERS_STATUS_SUCCESS && pc_ctx.pairing_code) {
+            if (atomic_load(&pc_ctx.called) && pc_ctx.status == WISPERS_STATUS_SUCCESS && pc_ctx.pairing_code) {
                 printf("Pairing code: %s\n", pc_ctx.pairing_code);
                 wispers_string_free(pc_ctx.pairing_code);
-            } else if (pc_ctx.called) {
+            } else if (atomic_load(&pc_ctx.called)) {
                 fprintf(stderr, "Failed to generate pairing code: %s\n", status_str(pc_ctx.status));
             } else {
                 fprintf(stderr, "Timeout generating pairing code\n");
@@ -792,7 +793,7 @@ static int cmd_serve(int print_pairing_code) {
     }
 
     // Wait indefinitely for the session to end (Ctrl-C will kill the process)
-    while (!run_ctx.called) {
+    while (!atomic_load(&run_ctx.called)) {
         usleep(100000);  // 100ms
     }
 
@@ -828,9 +829,9 @@ static int cmd_ping(int node_number) {
 
     WAIT_FOR_CALLBACK(init_ctx, 5000);
 
-    if (!init_ctx.called || init_ctx.status != WISPERS_STATUS_SUCCESS) {
+    if (!atomic_load(&init_ctx.called) || init_ctx.status != WISPERS_STATUS_SUCCESS) {
         fprintf(stderr, "Failed to restore state: %s\n",
-                init_ctx.called ? status_str(init_ctx.status) : "timeout");
+                atomic_load(&init_ctx.called) ? status_str(init_ctx.status) : "timeout");
         wispers_storage_free(storage);
         free(storage_ctx);
         return 1;
@@ -863,7 +864,7 @@ static int cmd_ping(int node_number) {
     // Wait for connection (up to 30 seconds for NAT traversal)
     WAIT_FOR_CALLBACK(conn_ctx, 30000);
 
-    if (!conn_ctx.called) {
+    if (!atomic_load(&conn_ctx.called)) {
         fprintf(stderr, "Timeout waiting for QUIC connection\n");
         wispers_activated_node_free(init_ctx.activated);
         wispers_storage_free(storage);
@@ -895,9 +896,9 @@ static int cmd_ping(int node_number) {
 
     WAIT_FOR_CALLBACK(stream_ctx, 10000);
 
-    if (!stream_ctx.called || stream_ctx.status != WISPERS_STATUS_SUCCESS) {
+    if (!atomic_load(&stream_ctx.called) || stream_ctx.status != WISPERS_STATUS_SUCCESS) {
         fprintf(stderr, "Failed to open stream: %s\n",
-                stream_ctx.called ? status_str(stream_ctx.status) : "timeout");
+                atomic_load(&stream_ctx.called) ? status_str(stream_ctx.status) : "timeout");
         wispers_quic_connection_free(conn_ctx.connection);
         wispers_activated_node_free(init_ctx.activated);
         wispers_storage_free(storage);
@@ -921,9 +922,9 @@ static int cmd_ping(int node_number) {
 
     WAIT_FOR_CALLBACK(write_ctx, 10000);
 
-    if (!write_ctx.called || write_ctx.status != WISPERS_STATUS_SUCCESS) {
+    if (!atomic_load(&write_ctx.called) || write_ctx.status != WISPERS_STATUS_SUCCESS) {
         fprintf(stderr, "Failed to write PING: %s\n",
-                write_ctx.called ? status_str(write_ctx.status) : "timeout");
+                atomic_load(&write_ctx.called) ? status_str(write_ctx.status) : "timeout");
         wispers_quic_stream_free(stream_ctx.stream);
         wispers_quic_connection_free(conn_ctx.connection);
         wispers_activated_node_free(init_ctx.activated);
@@ -947,9 +948,9 @@ static int cmd_ping(int node_number) {
 
     WAIT_FOR_CALLBACK(finish_ctx, 10000);
 
-    if (!finish_ctx.called || finish_ctx.status != WISPERS_STATUS_SUCCESS) {
+    if (!atomic_load(&finish_ctx.called) || finish_ctx.status != WISPERS_STATUS_SUCCESS) {
         fprintf(stderr, "Failed to finish stream: %s\n",
-                finish_ctx.called ? status_str(finish_ctx.status) : "timeout");
+                atomic_load(&finish_ctx.called) ? status_str(finish_ctx.status) : "timeout");
         wispers_quic_stream_free(stream_ctx.stream);
         wispers_quic_connection_free(conn_ctx.connection);
         wispers_activated_node_free(init_ctx.activated);
@@ -976,7 +977,7 @@ static int cmd_ping(int node_number) {
     long long end_time = current_time_ms();
     long long elapsed = end_time - start_time;
 
-    if (!read_ctx.called) {
+    if (!atomic_load(&read_ctx.called)) {
         fprintf(stderr, "Timeout waiting for PONG response\n");
         wispers_quic_stream_free(stream_ctx.stream);
         wispers_quic_connection_free(conn_ctx.connection);
