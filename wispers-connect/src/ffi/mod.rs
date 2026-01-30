@@ -3,6 +3,7 @@ mod handles;
 mod helpers;
 mod manager;
 mod nodes;
+mod p2p;
 pub(crate) mod runtime;
 mod serving;
 
@@ -38,6 +39,11 @@ pub use serving::{
     wispers_serving_session_free, wispers_serving_session_run_async, WispersIncomingConnections,
     WispersPairingCodeCallback, WispersServingHandle, WispersServingSession,
     WispersStartServingCallback,
+};
+pub use p2p::{
+    wispers_activated_node_connect_udp_async, wispers_udp_connection_close,
+    wispers_udp_connection_free, wispers_udp_connection_recv_async, wispers_udp_connection_send,
+    WispersDataCallback, WispersUdpConnectionCallback, WispersUdpConnectionHandle,
 };
 
 pub use crate::storage::foreign::WispersNodeStorageCallbacks;

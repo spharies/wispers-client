@@ -42,6 +42,7 @@ typedef struct WispersActivatedNodeHandle WispersActivatedNodeHandle;
 typedef struct WispersServingHandle WispersServingHandle;
 typedef struct WispersServingSession WispersServingSession;
 typedef struct WispersIncomingConnections WispersIncomingConnections;
+typedef struct WispersUdpConnectionHandle WispersUdpConnectionHandle;
 
 // Host-provided storage callbacks. All functions must be non-null when used.
 // The ctx pointer carries all context the host needs, including any namespace
@@ -137,6 +138,22 @@ typedef void (*WispersPairingCodeCallback)(
     void *ctx,
     WispersStatus status,
     char *pairing_code
+);
+
+// Callback that receives a UDP connection handle.
+typedef void (*WispersUdpConnectionCallback)(
+    void *ctx,
+    WispersStatus status,
+    WispersUdpConnectionHandle *connection
+);
+
+// Callback that receives data from a UDP connection.
+// The data buffer is only valid during the callback invocation.
+typedef void (*WispersDataCallback)(
+    void *ctx,
+    WispersStatus status,
+    const uint8_t *data,
+    size_t len
 );
 
 //------------------------------------------------------------------------------
@@ -283,8 +300,49 @@ WispersStatus wispers_activated_node_list_nodes_async(
     WispersNodeListCallback callback
 );
 
-// TODO: wispers_activated_node_connect_udp_async - Phase 8
-// TODO: wispers_activated_node_connect_quic_async - Phase 8
+//------------------------------------------------------------------------------
+// P2P UDP Connections
+//------------------------------------------------------------------------------
+
+// Connect to a peer node using UDP transport.
+// The activated handle is NOT consumed.
+// On success, callback receives the UDP connection handle.
+// Returns SUCCESS immediately if the async operation was started.
+WispersStatus wispers_activated_node_connect_udp_async(
+    WispersActivatedNodeHandle *handle,
+    int32_t peer_node_number,
+    void *ctx,
+    WispersUdpConnectionCallback callback
+);
+
+// Send data over a UDP connection.
+// This is a synchronous, non-blocking operation.
+// The connection handle is NOT consumed.
+// Returns SUCCESS if the data was sent, or an error status.
+WispersStatus wispers_udp_connection_send(
+    WispersUdpConnectionHandle *handle,
+    const uint8_t *data,
+    size_t len
+);
+
+// Receive data from a UDP connection.
+// The connection handle is NOT consumed.
+// On success, callback receives the data buffer (only valid during callback).
+// Returns SUCCESS immediately if the async operation was started.
+WispersStatus wispers_udp_connection_recv_async(
+    WispersUdpConnectionHandle *handle,
+    void *ctx,
+    WispersDataCallback callback
+);
+
+// Close a UDP connection.
+// The connection handle is CONSUMED by this call.
+void wispers_udp_connection_close(WispersUdpConnectionHandle *handle);
+
+// Free a UDP connection handle (if not already closed).
+void wispers_udp_connection_free(WispersUdpConnectionHandle *handle);
+
+// TODO: wispers_activated_node_connect_quic_async - Phase 8b
 
 //------------------------------------------------------------------------------
 // Serving
