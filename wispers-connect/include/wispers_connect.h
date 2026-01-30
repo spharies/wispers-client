@@ -42,7 +42,8 @@ typedef struct WispersActivatedNodeHandle WispersActivatedNodeHandle;
 
 // Host-provided storage callbacks. All functions must be non-null when used.
 // The ctx pointer carries all context the host needs, including any namespace
-// or isolation information. The library does not manage namespacing.
+// or isolation information used to keep different node storages separate. The
+// library does not manage namespacing.
 typedef struct {
     void *ctx;
     WispersStatus (*load_root_key)(void *ctx, uint8_t *out_key, size_t out_key_len);
@@ -62,8 +63,10 @@ typedef struct {
 // Basic completion callback (no result value).
 typedef void (*WispersCallback)(void *ctx, WispersStatus status);
 
-// Callback for restore_or_init that receives stage and appropriate handle.
-// Exactly one handle will be non-null on success.
+// Callback for restore_or_init, which restores the node at its current stage
+// (pending, registered, or activated). `stage` will be set to the appropriate
+// enum value and the matching handle will be filled in. Exactly one handle will
+// be non-null on success.
 typedef void (*WispersInitCallback)(
     void *ctx,
     WispersStatus status,
