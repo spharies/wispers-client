@@ -440,3 +440,190 @@ pub extern "C" fn wispers_quic_connection_close_async(
 
     WispersStatus::Success
 }
+
+//------------------------------------------------------------------------------
+// QUIC Stream FFI
+//------------------------------------------------------------------------------
+
+/// Write data to a QUIC stream.
+///
+/// The stream handle is NOT consumed.
+/// The data is copied before the function returns, so the caller's buffer
+/// can be freed immediately.
+/// Callback is invoked when the write completes.
+#[unsafe(no_mangle)]
+pub extern "C" fn wispers_quic_stream_write_async(
+    handle: *mut WispersQuicStreamHandle,
+    data: *const u8,
+    len: usize,
+    ctx: *mut c_void,
+    callback: super::callbacks::WispersCallback,
+) -> WispersStatus {
+    if handle.is_null() || data.is_null() {
+        return WispersStatus::NullPointer;
+    }
+
+    let callback = match callback {
+        Some(cb) => cb,
+        None => return WispersStatus::MissingCallback,
+    };
+
+    // Copy data before returning so caller can free their buffer
+    let data_owned = unsafe { std::slice::from_raw_parts(data, len) }.to_vec();
+    let ctx = CallbackContext(ctx);
+    let stream_ptr = SendableQuicStreamPtr(handle);
+
+    runtime::spawn(async move {
+        let stream = unsafe { stream_ptr.get() };
+        let result = stream.write_all(&data_owned).await;
+
+        match result {
+            Ok(()) => {
+                unsafe {
+                    callback(ctx.ptr(), WispersStatus::Success);
+                }
+            }
+            Err(_) => {
+                unsafe {
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed);
+                }
+            }
+        }
+    });
+
+    WispersStatus::Success
+}
+
+/// Read data from a QUIC stream.
+///
+/// The stream handle is NOT consumed.
+/// On success, callback receives the data buffer. The buffer is only valid
+/// during the callback invocation.
+/// max_len specifies the maximum number of bytes to read.
+#[unsafe(no_mangle)]
+pub extern "C" fn wispers_quic_stream_read_async(
+    handle: *mut WispersQuicStreamHandle,
+    max_len: usize,
+    ctx: *mut c_void,
+    callback: WispersDataCallback,
+) -> WispersStatus {
+    if handle.is_null() {
+        return WispersStatus::NullPointer;
+    }
+
+    let callback = match callback {
+        Some(cb) => cb,
+        None => return WispersStatus::MissingCallback,
+    };
+
+    let ctx = CallbackContext(ctx);
+    let stream_ptr = SendableQuicStreamPtr(handle);
+
+    runtime::spawn(async move {
+        let stream = unsafe { stream_ptr.get() };
+        let mut buf = vec![0u8; max_len];
+        let result = stream.read(&mut buf).await;
+
+        match result {
+            Ok(n) => {
+                unsafe {
+                    callback(ctx.ptr(), WispersStatus::Success, buf.as_ptr(), n);
+                }
+            }
+            Err(_) => {
+                unsafe {
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, std::ptr::null(), 0);
+                }
+            }
+        }
+    });
+
+    WispersStatus::Success
+}
+
+/// Close the stream for writing (send FIN).
+///
+/// The stream handle is NOT consumed. The stream can still be read from
+/// after calling finish.
+/// Callback is invoked when the finish completes.
+#[unsafe(no_mangle)]
+pub extern "C" fn wispers_quic_stream_finish_async(
+    handle: *mut WispersQuicStreamHandle,
+    ctx: *mut c_void,
+    callback: super::callbacks::WispersCallback,
+) -> WispersStatus {
+    if handle.is_null() {
+        return WispersStatus::NullPointer;
+    }
+
+    let callback = match callback {
+        Some(cb) => cb,
+        None => return WispersStatus::MissingCallback,
+    };
+
+    let ctx = CallbackContext(ctx);
+    let stream_ptr = SendableQuicStreamPtr(handle);
+
+    runtime::spawn(async move {
+        let stream = unsafe { stream_ptr.get() };
+        let result = stream.finish().await;
+
+        match result {
+            Ok(()) => {
+                unsafe {
+                    callback(ctx.ptr(), WispersStatus::Success);
+                }
+            }
+            Err(_) => {
+                unsafe {
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed);
+                }
+            }
+        }
+    });
+
+    WispersStatus::Success
+}
+
+/// Shutdown the stream (stop sending and receiving).
+///
+/// The stream handle is NOT consumed.
+/// Callback is invoked when the shutdown completes.
+#[unsafe(no_mangle)]
+pub extern "C" fn wispers_quic_stream_shutdown_async(
+    handle: *mut WispersQuicStreamHandle,
+    ctx: *mut c_void,
+    callback: super::callbacks::WispersCallback,
+) -> WispersStatus {
+    if handle.is_null() {
+        return WispersStatus::NullPointer;
+    }
+
+    let callback = match callback {
+        Some(cb) => cb,
+        None => return WispersStatus::MissingCallback,
+    };
+
+    let ctx = CallbackContext(ctx);
+    let stream_ptr = SendableQuicStreamPtr(handle);
+
+    runtime::spawn(async move {
+        let stream = unsafe { stream_ptr.get() };
+        let result = stream.shutdown().await;
+
+        match result {
+            Ok(()) => {
+                unsafe {
+                    callback(ctx.ptr(), WispersStatus::Success);
+                }
+            }
+            Err(_) => {
+                unsafe {
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed);
+                }
+            }
+        }
+    });
+
+    WispersStatus::Success
+}

@@ -409,7 +409,56 @@ void wispers_quic_connection_free(WispersQuicConnectionHandle *handle);
 // Free a QUIC stream handle.
 void wispers_quic_stream_free(WispersQuicStreamHandle *stream);
 
-// TODO: QUIC stream operations (read, write, finish, shutdown) - Phase 8c
+//------------------------------------------------------------------------------
+// QUIC Stream Operations
+//------------------------------------------------------------------------------
+
+// Write data to a QUIC stream.
+// The stream handle is NOT consumed.
+// The data is copied before the function returns, so the caller's buffer
+// can be freed immediately.
+// Callback is invoked when the write completes.
+// Returns SUCCESS immediately if the async operation was started.
+WispersStatus wispers_quic_stream_write_async(
+    WispersQuicStreamHandle *handle,
+    const uint8_t *data,
+    size_t len,
+    void *ctx,
+    WispersCallback callback
+);
+
+// Read data from a QUIC stream.
+// The stream handle is NOT consumed.
+// On success, callback receives the data buffer (only valid during callback).
+// max_len specifies the maximum number of bytes to read.
+// Returns SUCCESS immediately if the async operation was started.
+WispersStatus wispers_quic_stream_read_async(
+    WispersQuicStreamHandle *handle,
+    size_t max_len,
+    void *ctx,
+    WispersDataCallback callback
+);
+
+// Close the stream for writing (send FIN).
+// The stream handle is NOT consumed. The stream can still be read from
+// after calling finish.
+// Callback is invoked when the finish completes.
+// Returns SUCCESS immediately if the async operation was started.
+WispersStatus wispers_quic_stream_finish_async(
+    WispersQuicStreamHandle *handle,
+    void *ctx,
+    WispersCallback callback
+);
+
+// Shutdown the stream (stop sending and receiving).
+// The stream handle is NOT consumed.
+// Callback is invoked when the shutdown completes.
+// Returns SUCCESS immediately if the async operation was started.
+WispersStatus wispers_quic_stream_shutdown_async(
+    WispersQuicStreamHandle *handle,
+    void *ctx,
+    WispersCallback callback
+);
 
 //------------------------------------------------------------------------------
 // Serving
