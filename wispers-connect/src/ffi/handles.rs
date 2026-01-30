@@ -1,5 +1,5 @@
 use crate::errors::{NodeStateError, WispersStatus};
-use crate::state::{NodeStorage, PendingNodeState, RegisteredNodeState};
+use crate::state::{ActivatedNode, NodeStorage, PendingNodeState, RegisteredNodeState};
 use crate::storage::InMemoryStoreError;
 use crate::storage::{ForeignNodeStateStore, InMemoryNodeStateStore, foreign::ForeignStoreError};
 use crate::types::NodeRegistration;
@@ -19,9 +19,15 @@ pub enum RegisteredImpl {
     Foreign(RegisteredNodeState<ForeignNodeStateStore>),
 }
 
+pub enum ActivatedImpl {
+    InMemory(ActivatedNode<InMemoryNodeStateStore>),
+    Foreign(ActivatedNode<ForeignNodeStateStore>),
+}
+
 pub struct WispersNodeStorageHandle(pub ManagerImpl);
 pub struct WispersPendingNodeStateHandle(pub PendingImpl);
 pub struct WispersRegisteredNodeStateHandle(pub RegisteredImpl);
+pub struct WispersActivatedNodeHandle(pub ActivatedImpl);
 
 impl From<NodeStateError<InMemoryStoreError>> for WispersStatus {
     fn from(value: NodeStateError<InMemoryStoreError>) -> Self {

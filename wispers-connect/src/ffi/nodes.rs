@@ -1,5 +1,6 @@
 use super::handles::{
-    WispersPendingNodeStateHandle, WispersRegisteredNodeStateHandle, complete_registration_internal,
+    WispersActivatedNodeHandle, WispersPendingNodeStateHandle, WispersRegisteredNodeStateHandle,
+    complete_registration_internal,
 };
 use super::helpers::{c_str_to_string, reset_out_ptr};
 use crate::errors::WispersStatus;
@@ -18,6 +19,16 @@ pub extern "C" fn wispers_pending_state_free(handle: *mut WispersPendingNodeStat
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wispers_registered_state_free(handle: *mut WispersRegisteredNodeStateHandle) {
+    if handle.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(handle));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn wispers_activated_node_free(handle: *mut WispersActivatedNodeHandle) {
     if handle.is_null() {
         return;
     }

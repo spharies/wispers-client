@@ -60,4 +60,7 @@ pub enum WispersStatus {
     MissingCallback = 9,
     InvalidPairingCode = 10,
     ActivationFailed = 11,
+    HubError = 12,
+    ConnectionFailed = 13,
+    Timeout = 14,
 }
