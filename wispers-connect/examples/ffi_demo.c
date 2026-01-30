@@ -106,7 +106,7 @@ typedef struct {
 typedef struct {
     atomic_int called;
     WispersStatus status;
-    const uint8_t *data;
+    uint8_t data[1024];  // Copy of data (buffer only valid during callback)
     size_t len;
 } DataCtx;
 
@@ -215,7 +215,13 @@ static void data_callback(
 ) {
     DataCtx *c = (DataCtx *)ctx;
     c->status = status;
-    c->data = data;
+    // Copy data - the buffer is only valid during the callback
+    if (len > sizeof(c->data)) {
+        len = sizeof(c->data);
+    }
+    if (data && len > 0) {
+        memcpy(c->data, data, len);
+    }
     c->len = len;
     atomic_store(&c->called, 1);
 }
