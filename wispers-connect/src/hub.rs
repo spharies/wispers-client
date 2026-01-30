@@ -222,6 +222,17 @@ impl HubClient {
         let response = self.client.start_connection(grpc_request).await?;
         Ok(response.into_inner())
     }
+
+    /// Deregister this node from its connectivity group.
+    ///
+    /// This soft-deletes the node from the hub's database.
+    pub async fn deregister_node(&mut self, registration: &NodeRegistration) -> Result<(), HubError> {
+        let mut request = tonic::Request::new(proto::DeregisterNodeRequest {});
+        add_auth_metadata(request.metadata_mut(), registration)?;
+
+        self.client.deregister_node(request).await?;
+        Ok(())
+    }
 }
 
 /// A bidirectional serving connection to the hub.
