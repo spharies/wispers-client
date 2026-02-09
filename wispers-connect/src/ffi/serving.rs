@@ -239,9 +239,7 @@ pub extern "C" fn wispers_node_start_serving_async(
             Ok((serving_handle, session, incoming)) => {
                 let h = Box::into_raw(Box::new(WispersServingHandle(serving_handle)));
                 let s = Box::into_raw(Box::new(WispersServingSession(Some(session))));
-                let i = incoming
-                    .map(|inc| Box::into_raw(Box::new(WispersIncomingConnections(inc))))
-                    .unwrap_or(std::ptr::null_mut());
+                let i = Box::into_raw(Box::new(WispersIncomingConnections(incoming)));
                 unsafe {
                     callback(ctx.ptr(), WispersStatus::Success, h, s, i);
                 }
@@ -402,8 +400,7 @@ struct ServingParams {
     hub_addr: String,
     registration: crate::types::NodeRegistration,
     signing_key: crate::crypto::SigningKeyPair,
-    /// P2P config - only present for activated nodes
-    p2p_config: Option<crate::serving::P2pConfig>,
+    p2p_config: crate::serving::P2pConfig,
 }
 
 fn extract_serving_params(node: &Node) -> Result<ServingParams, WispersStatus> {
@@ -415,35 +412,23 @@ fn extract_serving_params(node: &Node) -> Result<ServingParams, WispersStatus> {
     let registration = node.registration().ok_or(WispersStatus::InvalidState)?.clone();
     let hub_addr = node.hub_addr();
 
-    // For registered nodes, derive signing key on demand. For activated nodes, use cached key.
-    let signing_key = node
-        .signing_key()
-        .cloned()
-        .or_else(|| node.derive_signing_key())
-        .ok_or(WispersStatus::InvalidState)?;
-
-    let p2p_config = if state == NodeState::Activated {
-        let x25519_key = node.encryption_key().ok_or(WispersStatus::InvalidState)?.clone();
-        Some(crate::serving::P2pConfig {
-            x25519_key,
-            hub_addr: hub_addr.clone(),
-            registration: registration.clone(),
-        })
-    } else {
-        None
+    let p2p_config = crate::serving::P2pConfig {
+        x25519_key: node.encryption_key().clone(),
+        hub_addr: hub_addr.clone(),
+        registration: registration.clone(),
     };
 
     Ok(ServingParams {
         hub_addr,
         registration,
-        signing_key,
+        signing_key: node.signing_key().clone(),
         p2p_config,
     })
 }
 
 async fn start_serving_impl(
     params: ServingParams,
-) -> Result<(ServingHandle, ServingSession, Option<IncomingConnections>), crate::hub::HubError> {
+) -> Result<(ServingHandle, ServingSession, IncomingConnections), crate::hub::HubError> {
     use crate::hub::HubClient;
     use crate::serving::ServingSession;
 

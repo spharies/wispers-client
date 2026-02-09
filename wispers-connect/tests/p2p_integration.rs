@@ -86,8 +86,7 @@ async fn test_p2p_connection_via_hub() {
     let node2 = Node::new_activated_for_test(root_key_2, roster, registration_2, hub_url);
 
     // Node 2 starts serving
-    let (handle, session, incoming_rx) = node2.start_serving().await.expect("node2 starts serving");
-    let mut incoming_rx = incoming_rx.expect("P2P config provided");
+    let (handle, session, mut incoming_rx) = node2.start_serving().await.expect("node2 starts serving");
 
     // Run the serving session in background
     let session_handle = tokio::spawn(async move {
@@ -147,8 +146,7 @@ async fn test_p2p_multiple_messages() {
         hub_url,
     );
 
-    let (_handle, session, incoming_rx) = node2.start_serving().await.expect("serving starts");
-    let mut incoming_rx = incoming_rx.expect("P2P config");
+    let (_handle, session, mut incoming_rx) = node2.start_serving().await.expect("serving starts");
     let session_handle = tokio::spawn(async move { let _ = session.run().await; });
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

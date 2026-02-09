@@ -12,8 +12,6 @@ use wispers_connect::{
 
 use crate::daemon;
 
-type IncomingResult = Option<IncomingConnections>;
-
 pub async fn serve(hub_override: Option<&str>, profile: &str) -> Result<()> {
     let storage = super::get_storage(hub_override, profile)?;
     let node = storage
@@ -46,11 +44,11 @@ pub async fn serve(hub_override: Option<&str>, profile: &str) -> Result<()> {
     // Spawn hub connection in background
     let connect_handle_state = handle_state.clone();
     let mut connect_task = tokio::spawn(async move {
-        let result: Result<(ServingHandle, ServingSession, IncomingResult), anyhow::Error> = node
-            .start_serving()
-            .await
-            .map(|(handle, session, incoming_rx)| (handle, session, incoming_rx))
-            .context("failed to start serving");
+        let result: Result<(ServingHandle, ServingSession, IncomingConnections), anyhow::Error> =
+            node.start_serving()
+                .await
+                .map(|(handle, session, incoming)| (handle, session, incoming))
+                .context("failed to start serving");
 
         if let Ok((handle, _session, _)) = &result {
             *connect_handle_state.write().await = Some(handle.clone());
@@ -63,7 +61,7 @@ pub async fn serve(hub_override: Option<&str>, profile: &str) -> Result<()> {
         tokio::task::JoinHandle<Result<(), wispers_connect::ServingError>>,
     > = None;
 
-    // Incoming P2P connections receivers (None until hub connects, stays None for Registered state)
+    // Incoming P2P connections receivers
     let mut incoming_udp_rx: Option<tokio::sync::mpsc::Receiver<Result<UdpConnection, P2pError>>> =
         None;
     let mut incoming_quic_rx: Option<
@@ -80,11 +78,8 @@ pub async fn serve(hub_override: Option<&str>, profile: &str) -> Result<()> {
                         println!("Connected to hub");
                         *handle_state.write().await = Some(handle);
                         session_task = Some(tokio::spawn(async move { session.run().await }));
-                        if let Some(inc) = incoming {
-                            incoming_udp_rx = Some(inc.udp);
-                            incoming_quic_rx = Some(inc.quic);
-                            println!("P2P connections enabled (activated node)");
-                        }
+                        incoming_udp_rx = Some(incoming.udp);
+                        incoming_quic_rx = Some(incoming.quic);
                     }
                     Ok(Err(e)) => {
                         return Err(e);

@@ -141,11 +141,8 @@ impl NodeStorage {
             .any(|n| n.node_number == registration.node_number);
 
         if is_activated {
-            let root_key = state.root_key.as_bytes();
-            let signing_key = SigningKeyPair::derive_from_root_key(root_key);
-            let encryption_key = X25519KeyPair::derive_from_root_key(root_key);
-
             // Verify the roster cryptographically before trusting it
+            let signing_key = SigningKeyPair::derive_from_root_key(state.root_key.as_bytes());
             verify_roster(
                 &roster,
                 registration.node_number,
@@ -157,8 +154,6 @@ impl NodeStorage {
                 state,
                 self.store.clone(),
                 self.config.clone(),
-                signing_key,
-                encryption_key,
                 roster,
             ))
         } else {
@@ -196,9 +191,10 @@ pub struct Node {
     persisted: PersistedNodeState,
     store: SharedStore,
     config: SharedConfig,
+    // Derived from root key at construction time
+    signing_key: SigningKeyPair,
+    encryption_key: X25519KeyPair,
     // Present after activation:
-    signing_key: Option<SigningKeyPair>,
-    encryption_key: Option<X25519KeyPair>,
     roster: Option<proto::roster::Roster>,
 }
 
@@ -209,12 +205,13 @@ impl Node {
         store: SharedStore,
         config: SharedConfig,
     ) -> Self {
+        let root_key = persisted.root_key.as_bytes();
         Self {
+            signing_key: SigningKeyPair::derive_from_root_key(root_key),
+            encryption_key: X25519KeyPair::derive_from_root_key(root_key),
             persisted,
             store,
             config,
-            signing_key: None,
-            encryption_key: None,
             roster: None,
         }
     }
@@ -228,31 +225,31 @@ impl Node {
         if persisted.registration.is_none() {
             return Err(NodeStateError::NotRegistered);
         }
+        let root_key = persisted.root_key.as_bytes();
         Ok(Self {
+            signing_key: SigningKeyPair::derive_from_root_key(root_key),
+            encryption_key: X25519KeyPair::derive_from_root_key(root_key),
             persisted,
             store,
             config,
-            signing_key: None,
-            encryption_key: None,
             roster: None,
         })
     }
 
-    /// Create an activated node (has registration, signing key, encryption key, and roster).
+    /// Create an activated node (has registration and roster).
     pub(crate) fn new_activated(
         persisted: PersistedNodeState,
         store: SharedStore,
         config: SharedConfig,
-        signing_key: SigningKeyPair,
-        encryption_key: X25519KeyPair,
         roster: proto::roster::Roster,
     ) -> Self {
+        let root_key = persisted.root_key.as_bytes();
         Self {
+            signing_key: SigningKeyPair::derive_from_root_key(root_key),
+            encryption_key: X25519KeyPair::derive_from_root_key(root_key),
             persisted,
             store,
             config,
-            signing_key: Some(signing_key),
-            encryption_key: Some(encryption_key),
             roster: Some(roster),
         }
     }
@@ -351,25 +348,14 @@ impl Node {
         Ok(())
     }
 
-    /// Get the signing key. Only available when activated.
-    pub(crate) fn signing_key(&self) -> Option<&SigningKeyPair> {
-        self.signing_key.as_ref()
+    /// Get the signing key.
+    pub(crate) fn signing_key(&self) -> &SigningKeyPair {
+        &self.signing_key
     }
 
-    /// Get the encryption key (X25519). Only available when activated.
-    pub(crate) fn encryption_key(&self) -> Option<&X25519KeyPair> {
-        self.encryption_key.as_ref()
-    }
-
-    /// Get a derived signing key (for registered nodes that need to serve).
-    /// This derives the key on demand from the root key.
-    pub(crate) fn derive_signing_key(&self) -> Option<SigningKeyPair> {
-        if self.state() == NodeState::Pending {
-            return None;
-        }
-        Some(SigningKeyPair::derive_from_root_key(
-            self.persisted.root_key.as_bytes(),
-        ))
+    /// Get the encryption key (X25519).
+    pub(crate) fn encryption_key(&self) -> &X25519KeyPair {
+        &self.encryption_key
     }
 
     // -------------------------------------------------------------------------
@@ -476,59 +462,42 @@ impl Node {
     /// Start a serving session.
     ///
     /// Requires: Registered or Activated state.
-    /// - Registered nodes can serve for bootstrapping but cannot accept P2P connections.
-    /// - Activated nodes can accept P2P connections.
+    ///
+    /// P2P connection requests are only accepted once the node is activated (appears
+    /// in the roster). The incoming connection channels are always created; they will
+    /// simply not receive any connections until activation is complete.
     pub async fn start_serving(
         &self,
     ) -> Result<
         (
             crate::serving::ServingHandle,
             crate::serving::ServingSession,
-            Option<crate::serving::IncomingConnections>,
+            crate::serving::IncomingConnections,
         ),
         NodeStateError,
     > {
+        use crate::serving::P2pConfig;
+
         let registration = self.require_at_least_registered()?;
         let hub_addr = self.hub_addr();
 
-        match self.state() {
-            NodeState::Pending => unreachable!("checked above"),
-            NodeState::Registered => {
-                println!(
-                    "Starting serving session for node {} in group {} (not yet activated)",
-                    registration.node_number, registration.connectivity_group_id
-                );
+        let is_activated = self.state() == NodeState::Activated;
+        println!(
+            "Starting serving session for node {} in group {}{}",
+            registration.node_number,
+            registration.connectivity_group_id,
+            if is_activated { "" } else { " (not yet activated)" }
+        );
 
-                let signing_key =
-                    SigningKeyPair::derive_from_root_key(self.persisted.root_key.as_bytes());
-                start_serving_impl(&hub_addr, signing_key, registration, None)
-                    .await
-                    .map_err(NodeStateError::hub)
-            }
-            NodeState::Activated => {
-                use crate::serving::P2pConfig;
+        let p2p_config = P2pConfig {
+            x25519_key: self.encryption_key.clone(),
+            hub_addr: hub_addr.clone(),
+            registration: registration.clone(),
+        };
 
-                println!(
-                    "Starting serving session for node {} in group {}",
-                    registration.node_number, registration.connectivity_group_id
-                );
-                let roster = self.roster.as_ref().expect("activated");
-                println!("Roster has {} nodes", roster.nodes.len());
-
-                let signing_key = self.signing_key.as_ref().expect("activated").clone();
-                let encryption_key = self.encryption_key.as_ref().expect("activated");
-
-                let p2p_config = P2pConfig {
-                    x25519_key: encryption_key.clone(),
-                    hub_addr: hub_addr.clone(),
-                    registration: registration.clone(),
-                };
-
-                start_serving_impl(&hub_addr, signing_key, registration, Some(p2p_config))
-                    .await
-                    .map_err(NodeStateError::hub)
-            }
-        }
+        start_serving_impl(&hub_addr, self.signing_key.clone(), registration, p2p_config)
+            .await
+            .map_err(NodeStateError::hub)
     }
 
     /// Activate this node by pairing with an endorser node.
@@ -547,16 +516,12 @@ impl Node {
             PairingCode::parse(pairing_code).map_err(NodeStateError::InvalidPairingCode)?;
         let endorser_node_number = pairing_code.node_number;
 
-        // Derive our signing key
-        let signing_key =
-            SigningKeyPair::derive_from_root_key(self.persisted.root_key.as_bytes());
-
         // Build the pairing request
         let nonce = generate_nonce();
         let payload = proto::pair_nodes_message::Payload {
             sender_node_number: registration.node_number,
             receiver_node_number: endorser_node_number,
-            public_key_spki: signing_key.public_key_spki(),
+            public_key_spki: self.signing_key.public_key_spki(),
             nonce: nonce.clone(),
             reply_nonce: vec![],
         };
@@ -626,7 +591,7 @@ impl Node {
             endorser_nonce,
         );
         let activation_payload_bytes = activation_payload.encode_to_vec();
-        let new_node_signature = signing_key.sign(&activation_payload_bytes);
+        let new_node_signature = self.signing_key.sign(&activation_payload_bytes);
 
         // Build the new roster
         let new_roster = if current_roster.version == 0 {
@@ -634,7 +599,7 @@ impl Node {
                 endorser_node_number,
                 &response_payload.public_key_spki,
                 registration.node_number,
-                &signing_key.public_key_spki(),
+                &self.signing_key.public_key_spki(),
                 activation_payload.new_node_nonce,
                 activation_payload.endorser_nonce,
                 new_node_signature,
@@ -644,7 +609,7 @@ impl Node {
                 &current_roster,
                 endorser_node_number,
                 registration.node_number,
-                &signing_key.public_key_spki(),
+                &self.signing_key.public_key_spki(),
                 activation_payload.new_node_nonce,
                 activation_payload.endorser_nonce,
                 new_node_signature,
@@ -661,17 +626,11 @@ impl Node {
         verify_roster(
             &cosigned_roster,
             registration.node_number,
-            &signing_key.public_key_spki(),
+            &self.signing_key.public_key_spki(),
         )
         .map_err(NodeStateError::RosterVerificationFailed)?;
 
-        // Derive encryption key for P2P connections
-        let encryption_key =
-            X25519KeyPair::derive_from_root_key(self.persisted.root_key.as_bytes());
-
-        // Update self to activated state
-        self.signing_key = Some(signing_key);
-        self.encryption_key = Some(encryption_key);
+        // Update to activated state (keys already derived at construction)
         self.roster = Some(cosigned_roster);
 
         Ok(())
@@ -700,8 +659,6 @@ impl Node {
         }
 
         let registration = self.persisted.registration.as_ref().expect("activated");
-        let signing_key = self.signing_key.as_ref().expect("activated");
-        let encryption_key = self.encryption_key.as_ref().expect("activated");
         let roster = self.roster.as_ref().expect("activated");
         let hub_addr = self.hub_addr();
 
@@ -718,13 +675,13 @@ impl Node {
         // Build the StartConnectionRequest
         let mut message_to_sign = Vec::new();
         message_to_sign.extend_from_slice(&peer_node_number.to_le_bytes());
-        message_to_sign.extend_from_slice(&encryption_key.public_key());
+        message_to_sign.extend_from_slice(&self.encryption_key.public_key());
         message_to_sign.extend_from_slice(caller_sdp.as_bytes());
-        let signature = signing_key.sign(&message_to_sign);
+        let signature = self.signing_key.sign(&message_to_sign);
 
         let request = proto::StartConnectionRequest {
             answerer_node_number: peer_node_number,
-            caller_x25519_public_key: encryption_key.public_key().to_vec(),
+            caller_x25519_public_key: self.encryption_key.public_key().to_vec(),
             caller_sdp,
             signature,
             stun_turn_config: Some(stun_turn_config),
@@ -767,7 +724,7 @@ impl Node {
             .map_err(|_| P2pError::SignatureVerificationFailed)?;
 
         // Derive shared secret
-        let shared_secret = encryption_key.diffie_hellman(&peer_x25519_public);
+        let shared_secret = self.encryption_key.diffie_hellman(&peer_x25519_public);
 
         // Complete ICE connection
         ice_caller.connect(&response.answerer_sdp).await?;
@@ -799,8 +756,6 @@ impl Node {
         }
 
         let registration = self.persisted.registration.as_ref().expect("activated");
-        let signing_key = self.signing_key.as_ref().expect("activated");
-        let encryption_key = self.encryption_key.as_ref().expect("activated");
         let roster = self.roster.as_ref().expect("activated");
         let hub_addr = self.hub_addr();
 
@@ -817,13 +772,13 @@ impl Node {
         // Build the StartConnectionRequest
         let mut message_to_sign = Vec::new();
         message_to_sign.extend_from_slice(&peer_node_number.to_le_bytes());
-        message_to_sign.extend_from_slice(&encryption_key.public_key());
+        message_to_sign.extend_from_slice(&self.encryption_key.public_key());
         message_to_sign.extend_from_slice(caller_sdp.as_bytes());
-        let signature = signing_key.sign(&message_to_sign);
+        let signature = self.signing_key.sign(&message_to_sign);
 
         let request = proto::StartConnectionRequest {
             answerer_node_number: peer_node_number,
-            caller_x25519_public_key: encryption_key.public_key().to_vec(),
+            caller_x25519_public_key: self.encryption_key.public_key().to_vec(),
             caller_sdp,
             signature,
             stun_turn_config: Some(stun_turn_config),
@@ -866,7 +821,7 @@ impl Node {
             .map_err(|_| P2pError::SignatureVerificationFailed)?;
 
         // Derive shared secret
-        let shared_secret = encryption_key.diffie_hellman(&peer_x25519_public);
+        let shared_secret = self.encryption_key.diffie_hellman(&peer_x25519_public);
 
         // Complete ICE connection
         ice_caller.connect(&response.answerer_sdp).await?;
@@ -911,7 +866,6 @@ impl Node {
                 use crate::roster::{compute_roster_hash, create_revocation_roster};
 
                 let registration = self.persisted.registration.as_ref().expect("activated");
-                let signing_key = self.signing_key.as_ref().expect("activated");
                 let roster = self.roster.as_ref().expect("activated");
 
                 let mut client = HubClient::connect(self.hub_addr())
@@ -927,7 +881,7 @@ impl Node {
                     revoked_node_number: registration.node_number,
                     revoker_node_number: registration.node_number,
                 };
-                let signature = signing_key.sign(&payload.encode_to_vec());
+                let signature = self.signing_key.sign(&payload.encode_to_vec());
 
                 let new_roster = create_revocation_roster(
                     roster,
@@ -971,13 +925,13 @@ impl Node {
         persisted.registration = Some(registration);
 
         Self {
+            signing_key: SigningKeyPair::derive_from_root_key(&root_key),
+            encryption_key: X25519KeyPair::derive_from_root_key(&root_key),
             persisted,
             store: Arc::new(InMemoryNodeStateStore::new()),
             config: Arc::new(std::sync::RwLock::new(RuntimeConfig::new_with_addr(
                 hub_addr,
             ))),
-            signing_key: Some(SigningKeyPair::derive_from_root_key(&root_key)),
-            encryption_key: Some(X25519KeyPair::derive_from_root_key(&root_key)),
             roster: Some(roster),
         }
     }
@@ -988,12 +942,12 @@ async fn start_serving_impl(
     hub_addr: &str,
     signing_key: SigningKeyPair,
     registration: &NodeRegistration,
-    p2p_config: Option<crate::serving::P2pConfig>,
+    p2p_config: crate::serving::P2pConfig,
 ) -> Result<
     (
         crate::serving::ServingHandle,
         crate::serving::ServingSession,
-        Option<crate::serving::IncomingConnections>,
+        crate::serving::IncomingConnections,
     ),
     crate::hub::HubError,
 > {

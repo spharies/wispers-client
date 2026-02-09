@@ -28,10 +28,7 @@ pub enum ServingError {
     PairingSessionActive,
 }
 
-/// Configuration for P2P connection handling (optional).
-///
-/// When provided, the serving session can accept incoming P2P connections.
-/// When not provided (e.g., for RegisteredNodeState), connection requests are rejected.
+/// Configuration for P2P connection handling.
 pub struct P2pConfig {
     /// X25519 key pair for key exchange.
     pub x25519_key: X25519KeyPair,
@@ -128,10 +125,10 @@ pub struct ServingSession {
     // Endorsing state
     pairing_secret: Option<PairingSecret>,
     pending_endorsement: Option<PendingEndorsement>,
-    // P2P state (only for activated nodes)
-    p2p_config: Option<P2pConfig>,
-    incoming_udp_tx: Option<mpsc::Sender<Result<UdpConnection, P2pError>>>,
-    incoming_quic_tx: Option<mpsc::Sender<Result<QuicConnection, P2pError>>>,
+    // P2P state (always present, but connections only accepted once activated)
+    p2p_config: P2pConfig,
+    incoming_udp_tx: mpsc::Sender<Result<UdpConnection, P2pError>>,
+    incoming_quic_tx: mpsc::Sender<Result<QuicConnection, P2pError>>,
     connection_id_counter: AtomicI64,
 }
 
@@ -149,31 +146,24 @@ pub struct IncomingConnections {
 impl ServingSession {
     /// Create a new serving session.
     ///
-    /// Returns a handle for sending commands and the session runner.
-    /// When `p2p_config` is provided, also returns receivers for incoming P2P connections.
+    /// Returns a handle for sending commands, the session runner, and receivers
+    /// for incoming P2P connections. P2P connections are only accepted once the
+    /// node is activated (appears in the roster), but the channels are always created.
     pub fn new(
         conn: ServingConnection,
         signing_key: SigningKeyPair,
         connectivity_group_id: ConnectivityGroupId,
         node_number: i32,
-        p2p_config: Option<P2pConfig>,
-    ) -> (ServingHandle, Self, Option<IncomingConnections>) {
+        p2p_config: P2pConfig,
+    ) -> (ServingHandle, Self, IncomingConnections) {
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
 
-        // Create incoming connection channels if P2P is enabled
-        let (incoming_udp_tx, incoming_quic_tx, incoming_rx) = if p2p_config.is_some() {
-            let (udp_tx, udp_rx) = mpsc::channel(16);
-            let (quic_tx, quic_rx) = mpsc::channel(16);
-            (
-                Some(udp_tx),
-                Some(quic_tx),
-                Some(IncomingConnections {
-                    udp: udp_rx,
-                    quic: quic_rx,
-                }),
-            )
-        } else {
-            (None, None, None)
+        // Always create incoming connection channels
+        let (udp_tx, udp_rx) = mpsc::channel(16);
+        let (quic_tx, quic_rx) = mpsc::channel(16);
+        let incoming = IncomingConnections {
+            udp: udp_rx,
+            quic: quic_rx,
         };
 
         let handle = ServingHandle { cmd_tx };
@@ -186,12 +176,12 @@ impl ServingSession {
             pairing_secret: None,
             pending_endorsement: None,
             p2p_config,
-            incoming_udp_tx,
-            incoming_quic_tx,
+            incoming_udp_tx: udp_tx,
+            incoming_quic_tx: quic_tx,
             connection_id_counter: AtomicI64::new(1),
         };
 
-        (handle, session, incoming_rx)
+        (handle, session, incoming)
     }
 
     /// Run the serving event loop.
@@ -551,13 +541,6 @@ impl ServingSession {
             caller_node_number, req.answerer_node_number
         );
 
-        // Check P2P is enabled
-        let Some(p2p_config) = &self.p2p_config else {
-            println!("  P2P not enabled (node may not be activated)");
-            self.send_error_response(request_id, "P2P connections not available").await;
-            return;
-        };
-
         // Parse caller's X25519 public key
         let caller_x25519_public: [u8; 32] = match req.caller_x25519_public_key.clone().try_into() {
             Ok(key) => key,
@@ -569,8 +552,7 @@ impl ServingSession {
         };
 
         // Fetch and verify fresh roster from hub
-        // This ensures we have the latest roster (including recently activated nodes)
-        let mut client = match HubClient::connect(&p2p_config.hub_addr).await {
+        let mut client = match HubClient::connect(&self.p2p_config.hub_addr).await {
             Ok(c) => c,
             Err(e) => {
                 println!("  Failed to connect to hub: {}", e);
@@ -580,10 +562,18 @@ impl ServingSession {
         };
 
         let roster = match client
-            .get_and_verify_roster(&p2p_config.registration, &self.signing_key.public_key_spki())
+            .get_and_verify_roster(&self.p2p_config.registration, &self.signing_key.public_key_spki())
             .await
         {
             Ok(r) => r,
+            Err(crate::hub::HubError::RosterVerification(
+                crate::roster::RosterVerificationError::VerifierNotInRoster(_),
+            )) => {
+                // We're not in the roster yet - not activated
+                println!("  Node not yet activated, cannot accept P2P connections");
+                self.send_error_response(request_id, "node not yet activated").await;
+                return;
+            }
             Err(e) => {
                 println!("  Failed to fetch/verify roster: {}", e);
                 self.send_error_response(request_id, "internal error").await;
@@ -649,12 +639,12 @@ impl ServingSession {
         // Sign our response: connection_id || answerer_x25519_public_key || answerer_sdp
         let mut message_to_sign = Vec::new();
         message_to_sign.extend_from_slice(&connection_id.to_le_bytes());
-        message_to_sign.extend_from_slice(&p2p_config.x25519_key.public_key());
+        message_to_sign.extend_from_slice(&self.p2p_config.x25519_key.public_key());
         message_to_sign.extend_from_slice(answerer_sdp.as_bytes());
         let signature = self.signing_key.sign(&message_to_sign);
 
         // Compute shared secret
-        let shared_secret = p2p_config.x25519_key.diffie_hellman(&caller_x25519_public);
+        let shared_secret = self.p2p_config.x25519_key.diffie_hellman(&caller_x25519_public);
 
         // Send response
         let response = proto::ServingResponse {
@@ -663,7 +653,7 @@ impl ServingSession {
             kind: Some(proto::serving_response::Kind::StartConnectionResponse(
                 proto::StartConnectionResponse {
                     connection_id,
-                    answerer_x25519_public_key: p2p_config.x25519_key.public_key().to_vec(),
+                    answerer_x25519_public_key: self.p2p_config.x25519_key.public_key().to_vec(),
                     answerer_sdp,
                     signature,
                 },
@@ -683,54 +673,52 @@ impl ServingSession {
             proto::Transport::Datagram => {
                 // UDP: Spawn a task to complete ICE
                 // The channel receives a fully-connected UdpConnection (or error)
-                if let Some(tx) = self.incoming_udp_tx.clone() {
-                    tokio::spawn(async move {
-                        println!("  Starting UDP ICE for connection_id={}", connection_id);
-                        let result = UdpConnection::connect_answerer(
-                            caller_node_number,
-                            connection_id,
-                            ice_answerer,
-                            shared_secret,
-                        )
-                        .await;
+                let tx = self.incoming_udp_tx.clone();
+                tokio::spawn(async move {
+                    println!("  Starting UDP ICE for connection_id={}", connection_id);
+                    let result = UdpConnection::connect_answerer(
+                        caller_node_number,
+                        connection_id,
+                        ice_answerer,
+                        shared_secret,
+                    )
+                    .await;
 
-                        match &result {
-                            Ok(_) => println!("  UDP ICE completed for connection_id={}", connection_id),
-                            Err(e) => eprintln!("  UDP ICE failed for connection_id={}: {}", connection_id, e),
-                        }
+                    match &result {
+                        Ok(_) => println!("  UDP ICE completed for connection_id={}", connection_id),
+                        Err(e) => eprintln!("  UDP ICE failed for connection_id={}: {}", connection_id, e),
+                    }
 
-                        if let Err(e) = tx.send(result).await {
-                            eprintln!("  Failed to deliver incoming UDP connection: {}", e);
-                        }
-                    });
-                    println!("  Spawned UDP ICE task");
-                }
+                    if let Err(e) = tx.send(result).await {
+                        eprintln!("  Failed to deliver incoming UDP connection: {}", e);
+                    }
+                });
+                println!("  Spawned UDP ICE task");
             }
             proto::Transport::Stream => {
                 // QUIC: Spawn a task to complete ICE + QUIC handshake
                 // The channel receives a fully-connected QuicConnection (or error)
-                if let Some(tx) = self.incoming_quic_tx.clone() {
-                    tokio::spawn(async move {
-                        println!("  Starting QUIC handshake for connection_id={}", connection_id);
-                        let result = QuicConnection::connect_answerer(
-                            caller_node_number,
-                            connection_id,
-                            ice_answerer,
-                            shared_secret,
-                        )
-                        .await;
+                let tx = self.incoming_quic_tx.clone();
+                tokio::spawn(async move {
+                    println!("  Starting QUIC handshake for connection_id={}", connection_id);
+                    let result = QuicConnection::connect_answerer(
+                        caller_node_number,
+                        connection_id,
+                        ice_answerer,
+                        shared_secret,
+                    )
+                    .await;
 
-                        match &result {
-                            Ok(_) => println!("  QUIC handshake completed for connection_id={}", connection_id),
-                            Err(e) => eprintln!("  QUIC handshake failed for connection_id={}: {}", connection_id, e),
-                        }
+                    match &result {
+                        Ok(_) => println!("  QUIC handshake completed for connection_id={}", connection_id),
+                        Err(e) => eprintln!("  QUIC handshake failed for connection_id={}: {}", connection_id, e),
+                    }
 
-                        if let Err(e) = tx.send(result).await {
-                            eprintln!("  Failed to deliver incoming QUIC connection: {}", e);
-                        }
-                    });
-                    println!("  Spawned QUIC handshake task");
-                }
+                    if let Err(e) = tx.send(result).await {
+                        eprintln!("  Failed to deliver incoming QUIC connection: {}", e);
+                    }
+                });
+                println!("  Spawned QUIC handshake task");
             }
         }
     }
