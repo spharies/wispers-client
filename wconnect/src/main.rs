@@ -1,5 +1,6 @@
 mod daemon;
 mod p2p;
+mod proxy_http;
 mod serving;
 
 use anyhow::{Context, Result};
@@ -77,6 +78,12 @@ enum Command {
 
         /// Remote port on target node
         remote_port: u16,
+    },
+    /// Start HTTP proxy for accessing web servers on remote nodes
+    ProxyHttp {
+        /// Address to bind the proxy server (default: 127.0.0.111:8080)
+        #[arg(long, default_value = "127.0.0.111:8080")]
+        bind: String,
     },
 }
 
@@ -218,6 +225,7 @@ async fn async_main(
         Command::Forward { local_port, node, remote_port } => {
             p2p::forward(hub_override, profile, local_port, node, remote_port).await
         }
+        Command::ProxyHttp { bind } => proxy_http::run(hub_override, profile, &bind).await,
     }
 }
 
