@@ -2,6 +2,7 @@ mod daemon;
 mod p2p;
 mod proxy_common;
 mod proxy_http;
+mod proxy_socks;
 mod serving;
 
 use anyhow::{Context, Result};
@@ -89,6 +90,12 @@ enum Command {
     ProxyHttp {
         /// Address to bind the proxy server (default: 127.0.0.111:8080)
         #[arg(long, default_value = "127.0.0.111:8080")]
+        bind: String,
+    },
+    /// Start SOCKS5 proxy for accessing services on remote nodes
+    ProxySocks {
+        /// Address to bind the proxy server (default: 127.0.0.111:1080)
+        #[arg(long, default_value = "127.0.0.111:1080")]
         bind: String,
     },
 }
@@ -237,6 +244,7 @@ async fn async_main(
             p2p::forward(hub_override, profile, local_port, node, remote_port).await
         }
         Command::ProxyHttp { bind } => proxy_http::run(hub_override, profile, &bind).await,
+        Command::ProxySocks { bind } => proxy_socks::run(hub_override, profile, &bind).await,
     }
 }
 
