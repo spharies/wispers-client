@@ -158,7 +158,7 @@ async fn handle_client_connection(
         let keep_alive = request.keep_alive;
 
         // Get target node based on destination
-        let (target_node, is_egress) = match &request.target.destination {
+        let (target_node, routing_via_egress) = match &request.target.destination {
             Destination::WispersNode { node_number, .. } => (*node_number, false),
             Destination::Internet { .. } => {
                 // Safe: parse_request only returns Internet if egress_node is Some
@@ -197,7 +197,7 @@ async fn handle_client_connection(
         {
             Ok(Ok(conn)) => conn,
             Ok(Err(e)) => {
-                let msg = if is_egress {
+                let msg = if routing_via_egress {
                     format!("failed to connect to egress node: {}", e)
                 } else {
                     format!("failed to connect to node: {}", e)
@@ -207,7 +207,7 @@ async fn handle_client_connection(
                 break;
             }
             Err(_) => {
-                let msg = if is_egress {
+                let msg = if routing_via_egress {
                     "connection to egress node timed out"
                 } else {
                     "connection to node timed out"
