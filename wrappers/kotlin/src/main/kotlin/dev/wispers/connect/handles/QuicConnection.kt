@@ -52,17 +52,19 @@ class QuicConnection internal constructor(
      * @return A new QUIC stream handle
      * @throws WispersException.ConnectionFailed if the connection is broken
      */
-    suspend fun openStream(): QuicStream = suspendCancellableCoroutine { cont ->
-        val ptr = requireOpen()
-        val ctx = CallbackBridge.register(cont)
+    suspend fun openStream(): QuicStream {
+        val result = suspendCancellableCoroutine<Any?> { cont ->
+            val ptr = requireOpen()
+            val ctx = CallbackBridge.register(cont)
 
-        val status = lib.wispers_quic_connection_open_stream_async(ptr, ctx, Callbacks.quicStream)
-        if (status != WispersStatus.SUCCESS.code) {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            val status = lib.wispers_quic_connection_open_stream_async(ptr, ctx, Callbacks.quicStream)
+            if (status != WispersStatus.SUCCESS.code) {
+                CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            }
         }
-    }.let { streamPtr ->
-        streamPtr as Pointer? ?: throw WispersException.NullPointer("QUIC stream is null")
-        QuicStream(streamPtr, lib)
+
+        val streamPtr = result as? Pointer ?: throw WispersException.NullPointer("QUIC stream is null")
+        return QuicStream(streamPtr, lib)
     }
 
     /**
@@ -73,17 +75,19 @@ class QuicConnection internal constructor(
      * @return The incoming QUIC stream handle
      * @throws WispersException.ConnectionFailed if the connection is broken
      */
-    suspend fun acceptStream(): QuicStream = suspendCancellableCoroutine { cont ->
-        val ptr = requireOpen()
-        val ctx = CallbackBridge.register(cont)
+    suspend fun acceptStream(): QuicStream {
+        val result = suspendCancellableCoroutine<Any?> { cont ->
+            val ptr = requireOpen()
+            val ctx = CallbackBridge.register(cont)
 
-        val status = lib.wispers_quic_connection_accept_stream_async(ptr, ctx, Callbacks.quicStream)
-        if (status != WispersStatus.SUCCESS.code) {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            val status = lib.wispers_quic_connection_accept_stream_async(ptr, ctx, Callbacks.quicStream)
+            if (status != WispersStatus.SUCCESS.code) {
+                CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            }
         }
-    }.let { streamPtr ->
-        streamPtr as Pointer? ?: throw WispersException.NullPointer("QUIC stream is null")
-        QuicStream(streamPtr, lib)
+
+        val streamPtr = result as? Pointer ?: throw WispersException.NullPointer("QUIC stream is null")
+        return QuicStream(streamPtr, lib)
     }
 
     /**

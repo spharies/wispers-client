@@ -78,21 +78,21 @@ class Storage internal constructor(
      * @return Pair of node and current state
      * @throws WispersException on error
      */
-    suspend fun restoreOrInit(): Pair<Node, NodeState> = suspendCancellableCoroutine { cont ->
-        val ptr = requireOpen()
-        val ctx = CallbackBridge.register(cont)
+    suspend fun restoreOrInit(): Pair<Node, NodeState> {
+        val result = suspendCancellableCoroutine<Any?> { cont ->
+            val ptr = requireOpen()
+            val ctx = CallbackBridge.register(cont)
 
-        val status = lib.wispers_storage_restore_or_init_async(ptr, ctx, Callbacks.init)
-        if (status != WispersStatus.SUCCESS.code) {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            val status = lib.wispers_storage_restore_or_init_async(ptr, ctx, Callbacks.init)
+            if (status != WispersStatus.SUCCESS.code) {
+                CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            }
         }
-    }.let { (handlePtr, stateCode) ->
+
         @Suppress("UNCHECKED_CAST")
-        val (ptr, state) = handlePtr as Pointer? to stateCode as Int
-        if (ptr == null) {
-            throw WispersException.NullPointer("Node pointer is null")
-        }
-        Node(ptr, lib) to NodeState.fromCode(state)
+        val pair = result as Pair<Pointer?, Int>
+        val nodePtr = pair.first ?: throw WispersException.NullPointer("Node pointer is null")
+        return Node(nodePtr, lib) to NodeState.fromCode(pair.second)
     }
 
     override fun doClose(pointer: Pointer) {

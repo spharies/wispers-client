@@ -109,7 +109,7 @@ class Node internal constructor(
      * @throws WispersException.HubError on hub communication failure
      */
     suspend fun listNodes(): List<NodeInfo> {
-        val listPtr: Pointer? = suspendCancellableCoroutine { cont ->
+        val listPtr = suspendCancellableCoroutine<Any?> { cont ->
             val ptr = requireOpen()
             val ctx = CallbackBridge.register(cont)
 
@@ -117,15 +117,10 @@ class Node internal constructor(
             if (status != WispersStatus.SUCCESS.code) {
                 CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
             }
-        }
-
-        if (listPtr == null) {
-            return emptyList()
-        }
+        } as? Pointer ?: return emptyList()
 
         try {
-            val nodeList = NativeTypes.WispersNodeList()
-            nodeList.useMemory(listPtr)
+            val nodeList = NativeTypes.WispersNodeList(listPtr)
             nodeList.read()
 
             val count = nodeList.count.toInt()
@@ -133,13 +128,11 @@ class Node internal constructor(
                 return emptyList()
             }
 
-            val nodeSize = NativeTypes.WispersNode().size()
-            return (0 until count).map { i ->
-                val nodePtr = nodeList.nodes!!.share((i * nodeSize).toLong())
-                val node = NativeTypes.WispersNode()
-                node.useMemory(nodePtr)
-                node.read()
+            val nodeArray = NativeTypes.WispersNode(nodeList.nodes!!)
+            val nodes = nodeArray.toArray(count) as Array<*>
 
+            return nodes.map { s ->
+                val node = s as NativeTypes.WispersNode
                 NodeInfo(
                     nodeNumber = node.nodeNumber,
                     name = node.name?.getString(0, "UTF-8") ?: "",
@@ -174,26 +167,26 @@ class Node internal constructor(
      * @throws WispersException.InvalidState if in Pending state
      * @throws WispersException.HubError on hub communication failure
      */
-    suspend fun startServing(): ServingSession = suspendCancellableCoroutine { cont ->
-        val ptr = requireOpen()
-        val ctx = CallbackBridge.register(cont)
+    suspend fun startServing(): ServingSession {
+        val result = suspendCancellableCoroutine<Any?> { cont ->
+            val ptr = requireOpen()
+            val ctx = CallbackBridge.register(cont)
 
-        val status = lib.wispers_node_start_serving_async(ptr, ctx, Callbacks.startServing)
-        if (status != WispersStatus.SUCCESS.code) {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            val status = lib.wispers_node_start_serving_async(ptr, ctx, Callbacks.startServing)
+            if (status != WispersStatus.SUCCESS.code) {
+                CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            }
         }
-    }.let { result ->
+
         @Suppress("UNCHECKED_CAST")
-        val (servingPtr, sessionPtr, incomingPtr) = result as Triple<Pointer?, Pointer?, Pointer?>
+        val triple = result as Triple<Pointer?, Pointer?, Pointer?>
+        val servingPtr = triple.first ?: throw WispersException.NullPointer("Serving session is null")
+        val sessionPtr = triple.second ?: throw WispersException.NullPointer("Serving session is null")
 
-        if (servingPtr == null || sessionPtr == null) {
-            throw WispersException.NullPointer("Serving session is null")
-        }
-
-        ServingSession(
+        return ServingSession(
             servingHandle = servingPtr,
             sessionHandle = sessionPtr,
-            incomingHandle = incomingPtr,
+            incomingHandle = triple.third,
             lib = lib
         )
     }
@@ -211,17 +204,18 @@ class Node internal constructor(
      * @throws WispersException.InvalidState if not in Activated state
      * @throws WispersException.ConnectionFailed if connection fails
      */
-    suspend fun connectUdp(peerNodeNumber: Int): UdpConnection = suspendCancellableCoroutine { cont ->
-        val ptr = requireOpen()
-        val ctx = CallbackBridge.register(cont)
+    suspend fun connectUdp(peerNodeNumber: Int): UdpConnection {
+        val connPtr = suspendCancellableCoroutine<Any?> { cont ->
+            val ptr = requireOpen()
+            val ctx = CallbackBridge.register(cont)
 
-        val status = lib.wispers_node_connect_udp_async(ptr, peerNodeNumber, ctx, Callbacks.udpConnection)
-        if (status != WispersStatus.SUCCESS.code) {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
-        }
-    }.let { connPtr ->
-        connPtr as Pointer? ?: throw WispersException.NullPointer("UDP connection is null")
-        UdpConnection(connPtr, lib)
+            val status = lib.wispers_node_connect_udp_async(ptr, peerNodeNumber, ctx, Callbacks.udpConnection)
+            if (status != WispersStatus.SUCCESS.code) {
+                CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            }
+        } as? Pointer ?: throw WispersException.NullPointer("UDP connection is null")
+
+        return UdpConnection(connPtr, lib)
     }
 
     /**
@@ -237,17 +231,18 @@ class Node internal constructor(
      * @throws WispersException.InvalidState if not in Activated state
      * @throws WispersException.ConnectionFailed if connection fails
      */
-    suspend fun connectQuic(peerNodeNumber: Int): QuicConnection = suspendCancellableCoroutine { cont ->
-        val ptr = requireOpen()
-        val ctx = CallbackBridge.register(cont)
+    suspend fun connectQuic(peerNodeNumber: Int): QuicConnection {
+        val connPtr = suspendCancellableCoroutine<Any?> { cont ->
+            val ptr = requireOpen()
+            val ctx = CallbackBridge.register(cont)
 
-        val status = lib.wispers_node_connect_quic_async(ptr, peerNodeNumber, ctx, Callbacks.quicConnection)
-        if (status != WispersStatus.SUCCESS.code) {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
-        }
-    }.let { connPtr ->
-        connPtr as Pointer? ?: throw WispersException.NullPointer("QUIC connection is null")
-        QuicConnection(connPtr, lib)
+            val status = lib.wispers_node_connect_quic_async(ptr, peerNodeNumber, ctx, Callbacks.quicConnection)
+            if (status != WispersStatus.SUCCESS.code) {
+                CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            }
+        } as? Pointer ?: throw WispersException.NullPointer("QUIC connection is null")
+
+        return QuicConnection(connPtr, lib)
     }
 
     override fun doClose(pointer: Pointer) {

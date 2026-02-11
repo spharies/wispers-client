@@ -97,19 +97,21 @@ class ServingSession internal constructor(
      * @return The pairing code string
      * @throws WispersException.HubError on hub communication failure
      */
-    suspend fun generatePairingCode(): String = suspendCancellableCoroutine { cont ->
-        requireOpen()
-        val ctx = CallbackBridge.register(cont)
+    suspend fun generatePairingCode(): String {
+        val result = suspendCancellableCoroutine<Any?> { cont ->
+            requireOpen()
+            val ctx = CallbackBridge.register(cont)
 
-        val status = lib.wispers_serving_handle_generate_pairing_code_async(
-            servingHandle, ctx, Callbacks.pairingCode
-        )
-        if (status != WispersStatus.SUCCESS.code) {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            val status = lib.wispers_serving_handle_generate_pairing_code_async(
+                servingHandle, ctx, Callbacks.pairingCode
+            )
+            if (status != WispersStatus.SUCCESS.code) {
+                CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            }
         }
-    }.let { codePtr ->
-        codePtr as Pointer? ?: throw WispersException.NullPointer("Pairing code is null")
-        try {
+
+        val codePtr = result as? Pointer ?: throw WispersException.NullPointer("Pairing code is null")
+        return try {
             codePtr.getString(0, "UTF-8")
         } finally {
             lib.wispers_string_free(codePtr)
@@ -130,17 +132,17 @@ class ServingSession internal constructor(
         val incoming = incomingHandle
             ?: throw WispersException.InvalidState("Node must be activated to accept connections")
 
-        return suspendCancellableCoroutine { cont ->
+        val result = suspendCancellableCoroutine<Any?> { cont ->
             val ctx = CallbackBridge.register(cont)
 
             val status = lib.wispers_incoming_accept_udp_async(incoming, ctx, Callbacks.udpConnection)
             if (status != WispersStatus.SUCCESS.code) {
                 CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
             }
-        }.let { connPtr ->
-            connPtr as Pointer? ?: throw WispersException.NullPointer("UDP connection is null")
-            UdpConnection(connPtr, lib)
         }
+
+        val connPtr = result as? Pointer ?: throw WispersException.NullPointer("UDP connection is null")
+        return UdpConnection(connPtr, lib)
     }
 
     /**
@@ -157,17 +159,17 @@ class ServingSession internal constructor(
         val incoming = incomingHandle
             ?: throw WispersException.InvalidState("Node must be activated to accept connections")
 
-        return suspendCancellableCoroutine { cont ->
+        val result = suspendCancellableCoroutine<Any?> { cont ->
             val ctx = CallbackBridge.register(cont)
 
             val status = lib.wispers_incoming_accept_quic_async(incoming, ctx, Callbacks.quicConnection)
             if (status != WispersStatus.SUCCESS.code) {
                 CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
             }
-        }.let { connPtr ->
-            connPtr as Pointer? ?: throw WispersException.NullPointer("QUIC connection is null")
-            QuicConnection(connPtr, lib)
         }
+
+        val connPtr = result as? Pointer ?: throw WispersException.NullPointer("QUIC connection is null")
+        return QuicConnection(connPtr, lib)
     }
 
     /**

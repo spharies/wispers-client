@@ -27,12 +27,15 @@ object NativeTypes {
      * Name string is owned and freed by wispers_node_list_free().
      */
     @Structure.FieldOrder("nodeNumber", "name", "isSelf", "activationStatus", "lastSeenAtMillis")
-    open class WispersNode : Structure() {
+    open class WispersNode : Structure {
         @JvmField var nodeNumber: Int = 0
         @JvmField var name: Pointer? = null
         @JvmField var isSelf: Boolean = false
         @JvmField var activationStatus: Int = 0
         @JvmField var lastSeenAtMillis: Long = 0
+
+        constructor() : super()
+        constructor(p: Pointer) : super(p)
 
         class ByReference : WispersNode(), Structure.ByReference
         class ByValue : WispersNode(), Structure.ByValue
@@ -42,9 +45,12 @@ object NativeTypes {
      * List of nodes. Free with wispers_node_list_free().
      */
     @Structure.FieldOrder("nodes", "count")
-    open class WispersNodeList : Structure() {
+    open class WispersNodeList : Structure {
         @JvmField var nodes: Pointer? = null
         @JvmField var count: Long = 0  // size_t
+
+        constructor() : super()
+        constructor(p: Pointer) : super(p)
 
         class ByReference : WispersNodeList(), Structure.ByReference
         class ByValue : WispersNodeList(), Structure.ByValue
