@@ -1,7 +1,7 @@
 package dev.wispers.connect
 
 import android.content.Context
-import dev.wispers.connect.handles.StorageHandle
+import dev.wispers.connect.handles.Storage
 import dev.wispers.connect.internal.NativeLibrary
 import dev.wispers.connect.storage.EncryptedStorage
 import dev.wispers.connect.storage.NodeStorageCallbacks
@@ -11,17 +11,23 @@ import dev.wispers.connect.types.WispersException
 /**
  * Entry point for wispers-connect.
  *
- * Use this object to create storage handles:
+ * Use this object to create storage and initialize nodes:
  *
  * ```kotlin
- * // Recommended: secure encrypted storage
+ * // Create storage (recommended: encrypted)
  * val storage = WispersConnect.createStorage(context)
  *
  * // Initialize or restore node
  * val (node, state) = storage.restoreOrInit()
  *
- * // For testing only: in-memory storage (data lost on process exit)
- * val testStorage = WispersConnect.createInMemoryStorage()
+ * when (state) {
+ *     NodeState.Pending -> node.register(token)
+ *     NodeState.Registered -> node.activate(pairingCode)
+ *     NodeState.Activated -> {
+ *         val session = node.startServing()
+ *         scope.launch { session.runEventLoop() }
+ *     }
+ * }
  * ```
  */
 object WispersConnect {
@@ -35,10 +41,10 @@ object WispersConnect {
      * AES256-GCM with keys stored in Android Keystore (hardware-backed if available).
      *
      * @param context Application or activity context
-     * @return A new storage handle
+     * @return A new storage instance
      * @throws WispersException if storage creation fails
      */
-    fun createStorage(context: Context): StorageHandle {
+    fun createStorage(context: Context): Storage {
         val callbacks = EncryptedStorage.create(context)
         return createStorage(callbacks)
     }
@@ -51,14 +57,14 @@ object WispersConnect {
      * with a Context parameter.
      *
      * @param callbacks Implementation of storage callbacks
-     * @return A new storage handle
+     * @return A new storage instance
      * @throws WispersException if storage creation fails
      */
-    fun createStorage(callbacks: NodeStorageCallbacks): StorageHandle {
+    fun createStorage(callbacks: NodeStorageCallbacks): Storage {
         val nativeCallbacks = callbacks.toNativeCallbacks()
         val ptr = lib.wispers_storage_new_with_callbacks(nativeCallbacks)
             ?: throw WispersException.NullPointer("Failed to create storage with callbacks")
-        return StorageHandle(ptr, lib)
+        return Storage(ptr, lib)
     }
 
     /**
@@ -67,12 +73,12 @@ object WispersConnect {
      * **For testing only.** Data will be lost when the process exits.
      * For production use, use [createStorage] with a Context.
      *
-     * @return A new storage handle
+     * @return A new storage instance
      * @throws WispersException if storage creation fails
      */
-    fun createInMemoryStorage(): StorageHandle {
+    fun createInMemoryStorage(): Storage {
         val ptr = lib.wispers_storage_new_in_memory()
             ?: throw WispersException.NullPointer("Failed to create in-memory storage")
-        return StorageHandle(ptr, lib)
+        return Storage(ptr, lib)
     }
 }

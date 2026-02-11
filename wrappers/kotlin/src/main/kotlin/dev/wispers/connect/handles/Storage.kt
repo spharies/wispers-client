@@ -12,15 +12,15 @@ import dev.wispers.connect.types.WispersStatus
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 /**
- * Handle to node storage.
+ * Node storage.
  *
  * Storage manages the persistent state of a node (root key, registration).
- * Use [restoreOrInit] to get a [NodeHandle] for performing operations.
+ * Use [restoreOrInit] to get a [Node] for performing operations.
  *
- * The storage handle remains valid after creating a node handle - you can
- * call [restoreOrInit] multiple times if needed.
+ * The storage remains valid after creating a node - you can call [restoreOrInit]
+ * multiple times if needed.
  */
-class StorageHandle internal constructor(
+class Storage internal constructor(
     pointer: Pointer,
     private val lib: NativeLibrary = NativeLibrary.INSTANCE
 ) : Handle(pointer) {
@@ -68,17 +68,17 @@ class StorageHandle internal constructor(
     /**
      * Restore existing node state or initialize a new node.
      *
-     * Returns a [NodeHandle] and the current [NodeState]. The state indicates
+     * Returns a [Node] and the current [NodeState]. The state indicates
      * what operations are available:
      *
-     * - [NodeState.Pending]: Call [NodeHandle.register] with a registration token
-     * - [NodeState.Registered]: Call [NodeHandle.activate] with a pairing code
+     * - [NodeState.Pending]: Call [Node.register] with a registration token
+     * - [NodeState.Registered]: Call [Node.activate] with a pairing code
      * - [NodeState.Activated]: Ready for P2P connections
      *
-     * @return Pair of node handle and current state
+     * @return Pair of node and current state
      * @throws WispersException on error
      */
-    suspend fun restoreOrInit(): Pair<NodeHandle, NodeState> = suspendCancellableCoroutine { cont ->
+    suspend fun restoreOrInit(): Pair<Node, NodeState> = suspendCancellableCoroutine { cont ->
         val ptr = requireOpen()
         val ctx = CallbackBridge.register(cont)
 
@@ -90,9 +90,9 @@ class StorageHandle internal constructor(
         @Suppress("UNCHECKED_CAST")
         val (ptr, state) = handlePtr as Pointer? to stateCode as Int
         if (ptr == null) {
-            throw WispersException.NullPointer("Node handle is null")
+            throw WispersException.NullPointer("Node pointer is null")
         }
-        NodeHandle(ptr, lib) to NodeState.fromCode(state)
+        Node(ptr, lib) to NodeState.fromCode(state)
     }
 
     override fun doClose(pointer: Pointer) {
