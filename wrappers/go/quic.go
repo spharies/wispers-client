@@ -5,6 +5,7 @@ package wispersgo
 */
 import "C"
 import (
+	"io"
 	"runtime"
 	"unsafe"
 )
@@ -130,6 +131,9 @@ func (s *QuicStream) Read(maxLen int) ([]byte, error) {
 	case error:
 		return nil, v
 	case dataResult:
+		if len(v.data) == 0 {
+			return nil, io.EOF
+		}
 		return v.data, nil
 	default:
 		panic("wispers: unexpected bridge result type")
