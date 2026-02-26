@@ -138,7 +138,8 @@ class Node internal constructor(
                     name = node.name?.getString(0, "UTF-8") ?: "",
                     isSelf = node.isSelf,
                     activationStatus = ActivationStatus.fromCode(node.activationStatus),
-                    lastSeenAtMillis = if (node.lastSeenAtMillis > 0) node.lastSeenAtMillis else null
+                    lastSeenAtMillis = if (node.lastSeenAtMillis > 0) node.lastSeenAtMillis else null,
+                    isOnline = node.isOnline
                 )
             }
         } finally {

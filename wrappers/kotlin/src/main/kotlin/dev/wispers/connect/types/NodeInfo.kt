@@ -41,5 +41,8 @@ data class NodeInfo(
     val activationStatus: ActivationStatus,
 
     /** Last time the node was seen (milliseconds since epoch), or null if unknown. */
-    val lastSeenAtMillis: Long?
+    val lastSeenAtMillis: Long?,
+
+    /** Whether the node currently has an active connection to the hub. */
+    val isOnline: Boolean
 )

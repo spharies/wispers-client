@@ -44,6 +44,7 @@ pub struct Node {
     pub node_number: i32,
     pub name: String,
     pub last_seen_at_millis: i64,
+    pub is_online: bool,
 }
 
 /// Client for communicating with the Wispers Connect Hub.
@@ -106,6 +107,7 @@ impl HubClient {
                 node_number: n.node_number,
                 name: n.name,
                 last_seen_at_millis: n.last_seen_at_millis,
+                is_online: n.is_online,
             })
             .collect();
         Ok(nodes)

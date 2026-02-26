@@ -453,6 +453,7 @@ impl Node {
                     .as_ref()
                     .map(|set| set.contains(&hub_node.node_number)),
                 last_seen_at_millis: hub_node.last_seen_at_millis,
+                is_online: hub_node.is_online,
             })
             .collect();
 

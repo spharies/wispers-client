@@ -155,6 +155,8 @@ pub struct WispersNode {
     /// Activation status: 0 = unknown, 1 = not activated, 2 = activated.
     pub activation_status: c_int,
     pub last_seen_at_millis: i64,
+    /// Whether the node currently has an active connection to the hub.
+    pub is_online: bool,
 }
 
 /// Activation status values for WispersNode.
@@ -194,6 +196,7 @@ impl WispersNodeList {
                 is_self: node.is_self,
                 activation_status,
                 last_seen_at_millis: node.last_seen_at_millis,
+                is_online: node.is_online,
             });
         }
 

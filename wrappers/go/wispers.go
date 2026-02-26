@@ -45,6 +45,7 @@ type NodeInfo struct {
 	IsSelf           bool
 	ActivationStatus ActivationStatus
 	LastSeenAtMillis int64
+	IsOnline         bool
 }
 
 // RegistrationInfo contains registration information for a node.

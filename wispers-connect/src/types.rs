@@ -129,6 +129,8 @@ pub struct NodeInfo {
     pub is_activated: Option<bool>,
     /// Unix timestamp in milliseconds when the node was last seen.
     pub last_seen_at_millis: i64,
+    /// Whether the node currently has an active connection to the hub.
+    pub is_online: bool,
 }
 
 /// Snapshot of all persisted node state; mostly kept internal.

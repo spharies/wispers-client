@@ -83,7 +83,8 @@ class TypesTest {
             name = "Test Node",
             isSelf = true,
             activationStatus = ActivationStatus.ACTIVATED,
-            lastSeenAtMillis = 1234567890L
+            lastSeenAtMillis = 1234567890L,
+            isOnline = true
         )
 
         assertEquals(1, info.nodeNumber)
@@ -91,6 +92,7 @@ class TypesTest {
         assertTrue(info.isSelf)
         assertEquals(ActivationStatus.ACTIVATED, info.activationStatus)
         assertEquals(1234567890L, info.lastSeenAtMillis)
+        assertTrue(info.isOnline)
     }
 
     @Test

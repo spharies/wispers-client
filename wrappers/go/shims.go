@@ -46,6 +46,7 @@ func goWispersNodeListCallback(ctx unsafe.Pointer, status C.int, list unsafe.Poi
 				IsSelf:           bool(cNodes[i].is_self),
 				ActivationStatus: ActivationStatus(cNodes[i].activation_status),
 				LastSeenAtMillis: int64(cNodes[i].last_seen_at_millis),
+				IsOnline:         bool(cNodes[i].is_online),
 			}
 		}
 	}

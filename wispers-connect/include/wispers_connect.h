@@ -97,6 +97,7 @@ typedef struct {
     bool is_self;                        // Whether this is the current node
     int32_t activation_status;           // WispersActivationStatus value
     int64_t last_seen_at_millis;
+    bool is_online;                      // Whether the node is connected to the hub
 } WispersNode;
 
 // List of nodes. Free with wispers_node_list_free().

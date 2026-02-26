@@ -431,13 +431,17 @@ async fn nodes(hub_override: Option<&str>, profile: &str) -> Result<()> {
                 tags.push("not activated");
             }
         }
-        let last_seen = format_last_seen(info.last_seen_at_millis);
+        let status = if info.is_online {
+            "online".to_string()
+        } else {
+            format_last_seen(info.last_seen_at_millis)
+        };
         let tags_str = if tags.is_empty() {
             String::new()
         } else {
             format!(" ({})", tags.join(", "))
         };
-        println!("  {}: {}{} - {}", info.node_number, name, tags_str, last_seen);
+        println!("  {}: {}{} - {}", info.node_number, name, tags_str, status);
     }
     Ok(())
 }
