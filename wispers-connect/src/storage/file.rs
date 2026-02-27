@@ -1,7 +1,7 @@
 //! File-based storage for node state.
 
 use crate::storage::{NodeStateStore, StorageError};
-use crate::types::{NodeRegistration, PersistedNodeState, RootKey, ROOT_KEY_LEN};
+use crate::types::{NodeRegistration, PersistedNodeState, ROOT_KEY_LEN};
 use std::fs;
 use std::path::PathBuf;
 
@@ -63,21 +63,18 @@ impl NodeStateStore for FileNodeStateStore {
             None
         };
 
-        Ok(Some(PersistedNodeState {
-            root_key: RootKey::from_bytes(key_array),
-            registration,
-        }))
+        Ok(Some(PersistedNodeState::from_stored(key_array, registration)))
     }
 
     fn save(&self, state: &PersistedNodeState) -> Result<(), StorageError> {
         fs::create_dir_all(&self.dir)?;
 
         // Save root key
-        fs::write(self.root_key_path(), state.root_key.as_bytes())?;
+        fs::write(self.root_key_path(), state.root_key_bytes())?;
 
         // Save registration if present
         let registration_path = self.registration_path();
-        if let Some(ref registration) = state.registration {
+        if let Some(registration) = state.registration() {
             let json = serde_json::to_string_pretty(registration)?;
             fs::write(&registration_path, json)?;
         } else if registration_path.exists() {

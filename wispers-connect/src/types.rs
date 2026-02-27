@@ -7,21 +7,20 @@ pub const ROOT_KEY_LEN: usize = 32;
 
 /// Secret root key material for a node.
 #[derive(Clone, PartialEq, Eq)]
-pub struct RootKey([u8; ROOT_KEY_LEN]);
+pub(crate) struct RootKey([u8; ROOT_KEY_LEN]);
 
 impl RootKey {
-    pub fn generate() -> Self {
+    pub(crate) fn generate() -> Self {
         let mut bytes = [0u8; ROOT_KEY_LEN];
         OsRng.fill_bytes(&mut bytes);
         Self(bytes)
     }
 
-    #[allow(dead_code)]
-    pub fn from_bytes(bytes: [u8; ROOT_KEY_LEN]) -> Self {
+    pub(crate) fn from_bytes(bytes: [u8; ROOT_KEY_LEN]) -> Self {
         Self(bytes)
     }
 
-    pub fn as_bytes(&self) -> &[u8; ROOT_KEY_LEN] {
+    pub(crate) fn as_bytes(&self) -> &[u8; ROOT_KEY_LEN] {
         &self.0
     }
 }
@@ -133,7 +132,7 @@ pub struct NodeInfo {
     pub is_online: bool,
 }
 
-/// Snapshot of all persisted node state; mostly kept internal.
+/// Snapshot of all persisted node state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PersistedNodeState {
     pub(crate) root_key: RootKey,
@@ -147,6 +146,27 @@ impl PersistedNodeState {
             root_key: RootKey::generate(),
             registration: None,
         }
+    }
+
+    /// Reconstruct from stored parts. For use by `NodeStateStore` implementations.
+    pub fn from_stored(
+        root_key_bytes: [u8; ROOT_KEY_LEN],
+        registration: Option<NodeRegistration>,
+    ) -> Self {
+        Self {
+            root_key: RootKey::from_bytes(root_key_bytes),
+            registration,
+        }
+    }
+
+    /// The root key as raw bytes. For use by `NodeStateStore` implementations.
+    pub fn root_key_bytes(&self) -> &[u8; ROOT_KEY_LEN] {
+        self.root_key.as_bytes()
+    }
+
+    /// The registration, if any. For use by `NodeStateStore` implementations.
+    pub fn registration(&self) -> Option<&NodeRegistration> {
+        self.registration.as_ref()
     }
 
     pub fn is_registered(&self) -> bool {
