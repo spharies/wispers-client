@@ -258,8 +258,8 @@ impl ServingSession {
     }
 
     fn handle_generate_pairing_secret(&mut self) -> Result<PairingCode, ServingError> {
-        // Only allow one active pairing session
-        if self.pairing_secret.is_some() || self.pending_endorsement.is_some() {
+        // Block if an endorsement is actively in progress.
+        if self.pending_endorsement.is_some() {
             return Err(ServingError::PairingSessionActive);
         }
 
