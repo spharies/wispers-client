@@ -129,6 +129,7 @@ class Node internal constructor(
             }
 
             val nodeArray = NativeTypes.WispersNode(nodeList.nodes!!)
+            nodeArray.read()
             val nodes = nodeArray.toArray(count) as Array<*>
 
             return nodes.map { s ->
@@ -136,10 +137,10 @@ class Node internal constructor(
                 NodeInfo(
                     nodeNumber = node.nodeNumber,
                     name = node.name?.getString(0, "UTF-8") ?: "",
-                    isSelf = node.isSelf,
+                    isSelf = node.isSelf != 0.toByte(),
                     activationStatus = ActivationStatus.fromCode(node.activationStatus),
                     lastSeenAtMillis = if (node.lastSeenAtMillis > 0) node.lastSeenAtMillis else null,
-                    isOnline = node.isOnline
+                    isOnline = node.isOnline != 0.toByte()
                 )
             }
         } finally {
