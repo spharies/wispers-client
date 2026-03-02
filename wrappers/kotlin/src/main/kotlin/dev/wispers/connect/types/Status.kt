@@ -21,7 +21,8 @@ enum class WispersStatus(val code: Int) {
     HUB_ERROR(12),
     CONNECTION_FAILED(13),
     TIMEOUT(14),
-    INVALID_STATE(15);
+    INVALID_STATE(15),
+    UNAUTHENTICATED(16);
 
     companion object {
         private val codeMap = entries.associateBy { it.code }

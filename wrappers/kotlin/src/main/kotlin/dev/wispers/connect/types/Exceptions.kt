@@ -72,6 +72,10 @@ sealed class WispersException(
     class InvalidState(message: String = "Invalid state for operation") :
         WispersException(message, WispersStatus.INVALID_STATE)
 
+    /** Node removed from connectivity group. */
+    class Unauthenticated(message: String = "Node removed from connectivity group") :
+        WispersException(message, WispersStatus.UNAUTHENTICATED)
+
     /** Unknown error status. */
     class Unknown(status: WispersStatus, message: String = "Unknown error: $status") :
         WispersException(message, status)
@@ -110,6 +114,7 @@ sealed class WispersException(
             WispersStatus.CONNECTION_FAILED -> ConnectionFailed()
             WispersStatus.TIMEOUT -> Timeout()
             WispersStatus.INVALID_STATE -> InvalidState()
+            WispersStatus.UNAUTHENTICATED -> Unauthenticated()
         }
     }
 }

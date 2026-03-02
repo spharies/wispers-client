@@ -28,6 +28,12 @@ pub enum ServingError {
     PairingSessionActive,
 }
 
+impl ServingError {
+    pub fn is_unauthenticated(&self) -> bool {
+        matches!(self, ServingError::Hub(e) if e.is_unauthenticated())
+    }
+}
+
 /// Configuration for P2P connection handling.
 pub struct P2pConfig {
     /// X25519 key pair for key exchange.

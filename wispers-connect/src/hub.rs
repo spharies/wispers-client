@@ -38,6 +38,12 @@ pub enum HubError {
     RosterVerification(#[from] crate::roster::RosterVerificationError),
 }
 
+impl HubError {
+    pub fn is_unauthenticated(&self) -> bool {
+        matches!(self, HubError::Rpc(s) if s.code() == tonic::Code::Unauthenticated)
+    }
+}
+
 /// A node in a connectivity group.
 #[derive(Debug, Clone)]
 pub struct Node {

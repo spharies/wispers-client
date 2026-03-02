@@ -244,11 +244,16 @@ pub extern "C" fn wispers_node_start_serving_async(
                     callback(ctx.ptr(), WispersStatus::Success, h, s, i);
                 }
             }
-            Err(_) => {
+            Err(e) => {
+                let status = if e.is_unauthenticated() {
+                    WispersStatus::Unauthenticated
+                } else {
+                    WispersStatus::HubError
+                };
                 unsafe {
                     callback(
                         ctx.ptr(),
-                        WispersStatus::HubError,
+                        status,
                         std::ptr::null_mut(),
                         std::ptr::null_mut(),
                         std::ptr::null_mut(),
@@ -302,6 +307,11 @@ pub extern "C" fn wispers_serving_handle_generate_pairing_code_async(
                     }
                 }
             }
+            Err(ref e) if e.is_unauthenticated() => {
+                unsafe {
+                    callback(ctx.ptr(), WispersStatus::Unauthenticated, std::ptr::null_mut());
+                }
+            }
             Err(_) => {
                 unsafe {
                     callback(ctx.ptr(), WispersStatus::HubError, std::ptr::null_mut());
@@ -347,6 +357,7 @@ pub extern "C" fn wispers_serving_session_run_async(
         let result = session.run().await;
         let status = match result {
             Ok(()) => WispersStatus::Success,
+            Err(ref e) if e.is_unauthenticated() => WispersStatus::Unauthenticated,
             Err(_) => WispersStatus::HubError,
         };
         unsafe {

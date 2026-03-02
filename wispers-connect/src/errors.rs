@@ -29,6 +29,10 @@ impl NodeStateError {
     pub fn hub(error: crate::hub::HubError) -> Self {
         Self::Hub(error)
     }
+
+    pub fn is_unauthenticated(&self) -> bool {
+        matches!(self, NodeStateError::Hub(e) if e.is_unauthenticated())
+    }
 }
 
 impl fmt::Display for NodeStateError {
@@ -73,4 +77,5 @@ pub enum WispersStatus {
     ConnectionFailed = 13,
     Timeout = 14,
     InvalidState = 15,
+    Unauthenticated = 16,
 }
