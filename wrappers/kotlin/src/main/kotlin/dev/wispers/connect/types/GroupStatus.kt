@@ -1,26 +1,26 @@
 package dev.wispers.connect.types
 
 /**
- * What action the calling node should take regarding activation.
+ * Activation state of the connectivity group from this node's perspective.
  */
-sealed class ActivationAction(val code: Int) {
+sealed class GroupState(val code: Int) {
     /** Only node in the group — nothing to activate with. */
-    data object Alone : ActivationAction(0)
+    data object Alone : GroupState(0)
 
     /** No activated nodes (empty or dead roster). Any node can pair with any other. */
-    data object Bootstrap : ActivationAction(1)
+    data object Bootstrap : GroupState(1)
 
     /** Roster exists with activated peers — this node needs a code from one. */
-    data object NeedActivation : ActivationAction(2)
+    data object NeedActivation : GroupState(2)
 
     /** This node is activated; unactivated peers exist that can be endorsed. */
-    data object CanEndorse : ActivationAction(3)
+    data object CanEndorse : GroupState(3)
 
     /** All nodes in the group are activated. */
-    data object AllActivated : ActivationAction(4)
+    data object AllActivated : GroupState(4)
 
     companion object {
-        fun fromCode(code: Int): ActivationAction = when (code) {
+        fun fromCode(code: Int): GroupState = when (code) {
             0 -> Alone
             1 -> Bootstrap
             2 -> NeedActivation
@@ -34,9 +34,9 @@ sealed class ActivationAction(val code: Int) {
 /**
  * Snapshot of the connectivity group's activation state.
  */
-data class GroupStatus(
-    /** What action the calling node should take. */
-    val action: ActivationAction,
+data class GroupInfo(
+    /** Activation state of the group from this node's perspective. */
+    val state: GroupState,
 
     /** All nodes in the connectivity group. */
     val nodes: List<NodeInfo>

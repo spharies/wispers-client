@@ -87,13 +87,13 @@ func (n *Node) Logout() error {
 	return nil
 }
 
-// GroupStatus returns the group's activation status and node list.
+// GroupInfo returns the group's activation state and node list.
 // Requires Registered or Activated state.
-func (n *Node) GroupStatus() (*GroupStatus, error) {
+func (n *Node) GroupInfo() (*GroupInfo, error) {
 	ptr := n.requireOpen()
 	call := newPendingCall()
 	defer call.cancel()
-	status := C.callGroupStatusAsync(
+	status := C.callGroupInfoAsync(
 		(*C.WispersNodeHandle)(ptr),
 		call.ctx(),
 	)
@@ -104,8 +104,8 @@ func (n *Node) GroupStatus() (*GroupStatus, error) {
 	switch v := call.wait().(type) {
 	case error:
 		return nil, v
-	case groupStatusResult:
-		return &GroupStatus{Action: v.action, Nodes: v.nodes}, nil
+	case groupInfoResult:
+		return &GroupInfo{State: v.state, Nodes: v.nodes}, nil
 	default:
 		panic("wispers: unexpected bridge result type")
 	}

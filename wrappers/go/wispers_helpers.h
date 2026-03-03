@@ -9,7 +9,7 @@
 // Forward declarations for //export functions in shims.go.
 extern void goWispersCallback(void *ctx, int status, const char *detail);
 extern void goWispersInitCallback(void *ctx, int status, const char *detail, void *handle, int state);
-extern void goWispersGroupStatusCallback(void *ctx, int status, const char *detail, WispersGroupStatus *gs);
+extern void goWispersGroupInfoCallback(void *ctx, int status, const char *detail, WispersGroupInfo *gi);
 extern void goWispersStartServingCallback(void *ctx, int status, const char *detail, void *serving, void *session, void *incoming);
 extern void goWispersPairingCodeCallback(void *ctx, int status, const char *detail, char *code);
 extern void goWispersUdpConnectionCallback(void *ctx, int status, const char *detail, void *conn);
@@ -35,8 +35,8 @@ static inline void shimWispersInitCallback(void *ctx, WispersStatus status, cons
 	goWispersInitCallback(ctx, (int)status, detail, (void*)handle, (int)state);
 }
 
-static inline void shimWispersGroupStatusCallback(void *ctx, WispersStatus status, const char *detail, WispersGroupStatus *gs) {
-	goWispersGroupStatusCallback(ctx, (int)status, detail, gs);
+static inline void shimWispersGroupInfoCallback(void *ctx, WispersStatus status, const char *detail, WispersGroupInfo *gi) {
+	goWispersGroupInfoCallback(ctx, (int)status, detail, gi);
 }
 
 static inline void shimWispersStartServingCallback(void *ctx, WispersStatus status, const char *detail, WispersServingHandle *serving, WispersServingSession *session, WispersIncomingConnections *incoming) {
@@ -94,8 +94,8 @@ static inline WispersStatus callLogoutAsync(WispersNodeHandle *h, void *ctx) {
 	return wispers_node_logout_async(h, ctx, shimWispersCallback);
 }
 
-static inline WispersStatus callGroupStatusAsync(WispersNodeHandle *h, void *ctx) {
-	return wispers_node_group_status_async(h, ctx, shimWispersGroupStatusCallback);
+static inline WispersStatus callGroupInfoAsync(WispersNodeHandle *h, void *ctx) {
+	return wispers_node_group_info_async(h, ctx, shimWispersGroupInfoCallback);
 }
 
 static inline WispersStatus callStartServingAsync(WispersNodeHandle *h, void *ctx) {

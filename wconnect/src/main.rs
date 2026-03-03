@@ -406,42 +406,42 @@ async fn nodes(hub_override: Option<&str>, profile: &str) -> Result<()> {
     }
 
     let cg_id = node.connectivity_group_id().unwrap();
-    let status = node.group_status().await.context("failed to get group status")?;
+    let info = node.group_info().await.context("failed to get group info")?;
 
-    if status.nodes.is_empty() {
+    if info.nodes.is_empty() {
         println!("No nodes in connectivity group.");
         return Ok(());
     }
 
-    println!("Nodes in connectivity group {} (action: {:?}):", cg_id, status.action);
-    for info in status.nodes {
-        let name = if info.name.is_empty() {
+    println!("Nodes in connectivity group {} (state: {:?}):", cg_id, info.state);
+    for node_info in info.nodes {
+        let name = if node_info.name.is_empty() {
             "(unnamed)".to_string()
         } else {
-            info.name
+            node_info.name
         };
         let mut tags = Vec::new();
-        if info.is_self {
+        if node_info.is_self {
             tags.push("you");
         }
-        if let Some(activated) = info.is_activated {
+        if let Some(activated) = node_info.is_activated {
             if activated {
                 tags.push("activated");
             } else {
                 tags.push("not activated");
             }
         }
-        let status = if info.is_online {
+        let status = if node_info.is_online {
             "online".to_string()
         } else {
-            format_last_seen(info.last_seen_at_millis)
+            format_last_seen(node_info.last_seen_at_millis)
         };
         let tags_str = if tags.is_empty() {
             String::new()
         } else {
             format!(" ({})", tags.join(", "))
         };
-        println!("  {}: {}{} - {}", info.node_number, name, tags_str, status);
+        println!("  {}: {}{} - {}", node_info.node_number, name, tags_str, status);
     }
     Ok(())
 }

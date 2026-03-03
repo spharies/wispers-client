@@ -115,11 +115,11 @@ object Callbacks {
     }
 
     /**
-     * Group status callback - resumes with Pointer to group status on success.
+     * Group info callback - resumes with Pointer to group info on success.
      */
-    val groupStatus = NativeCallbacks.WispersGroupStatusCallback { ctx, status, errorDetail, groupStatus ->
+    val groupInfo = NativeCallbacks.WispersGroupInfoCallback { ctx, status, errorDetail, groupInfo ->
         if (status == WispersStatus.SUCCESS.code) {
-            CallbackBridge.resumeSuccess(ctx, groupStatus)
+            CallbackBridge.resumeSuccess(ctx, groupInfo)
         } else {
             CallbackBridge.resumeException(ctx, WispersException.fromStatus(status, errorDetail))
         }

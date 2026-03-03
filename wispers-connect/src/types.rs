@@ -133,9 +133,9 @@ pub struct NodeInfo {
     pub is_online: bool,
 }
 
-/// What action the calling node should take regarding activation.
+/// Activation state of the connectivity group from this node's perspective.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ActivationAction {
+pub enum GroupState {
     /// Only node in the group — nothing to activate with.
     Alone,
     /// No activated nodes (empty or dead roster). Any node can pair with any
@@ -151,8 +151,8 @@ pub enum ActivationAction {
 
 /// Snapshot of the connectivity group's activation state.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GroupStatus {
-    pub action: ActivationAction,
+pub struct GroupInfo {
+    pub state: GroupState,
     pub nodes: Vec<NodeInfo>,
 }
 

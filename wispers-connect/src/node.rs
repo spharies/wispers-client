@@ -17,7 +17,7 @@ use crate::roster::{
     build_activation_payload, create_activation_roster, create_bootstrap_roster, verify_roster,
 };
 use crate::storage::{NodeStateStore, SharedStore};
-use crate::types::{ActivationAction, ConnectivityGroupId, GroupStatus, NodeInfo, NodeRegistration, PersistedNodeState};
+use crate::types::{ConnectivityGroupId, GroupInfo, GroupState, NodeInfo, NodeRegistration, PersistedNodeState};
 use prost::Message;
 
 /// Default hub address for production use.
@@ -424,9 +424,9 @@ impl Node {
     /// Requires: Registered or Activated state.
     ///
     /// Fetches the hub node list and roster, analyzes activation state, and
-    /// returns a unified [`GroupStatus`] containing both the recommended action
+    /// returns a unified [`GroupInfo`] containing both the group state
     /// and the full node list. This replaces the former `list_nodes()` method.
-    pub async fn group_status(&self) -> Result<GroupStatus, NodeStateError> {
+    pub async fn group_info(&self) -> Result<GroupInfo, NodeStateError> {
         use crate::hub::HubClient;
         use crate::roster::active_nodes;
 
@@ -489,23 +489,23 @@ impl Node {
             })
             .collect();
 
-        // Determine the activation action
-        let action = if nodes.len() <= 1 {
-            ActivationAction::Alone
+        // Determine the group state
+        let state = if nodes.len() <= 1 {
+            GroupState::Alone
         } else if activated_set.is_empty() || is_dead_roster {
-            ActivationAction::Bootstrap
+            GroupState::Bootstrap
         } else if !self_activated {
-            ActivationAction::NeedActivation
+            GroupState::NeedActivation
         } else {
             let all_activated = nodes.iter().all(|n| n.is_activated == Some(true));
             if all_activated {
-                ActivationAction::AllActivated
+                GroupState::AllActivated
             } else {
-                ActivationAction::CanEndorse
+                GroupState::CanEndorse
             }
         };
 
-        Ok(GroupStatus { action, nodes })
+        Ok(GroupInfo { state, nodes })
     }
 
     /// Start a serving session.

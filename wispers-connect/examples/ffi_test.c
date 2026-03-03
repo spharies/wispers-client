@@ -528,44 +528,44 @@ static int test_node_activate_null_callback(void) {
 }
 
 //------------------------------------------------------------------------------
-// Phase 6: Group status tests
+// Phase 6: Group info tests
 //------------------------------------------------------------------------------
 
-// Test context for group status callbacks
+// Test context for group info callbacks
 typedef struct {
     int called;
     WispersStatus status;
-    WispersGroupStatus *group_status;
-} GroupStatusTestCtx;
+    WispersGroupInfo *group_info;
+} GroupInfoTestCtx;
 
-static void group_status_callback(
+static void group_info_callback(
     void *ctx,
     WispersStatus status,
     const char *error_detail,
-    WispersGroupStatus *group_status
+    WispersGroupInfo *group_info
 ) {
     (void)error_detail;
-    GroupStatusTestCtx *test = (GroupStatusTestCtx *)ctx;
+    GroupInfoTestCtx *test = (GroupInfoTestCtx *)ctx;
     test->called = 1;
     test->status = status;
-    test->group_status = group_status;
+    test->group_info = group_info;
 }
 
-static int test_group_status_free_null(void) {
-    TEST("group_status_free handles NULL");
+static int test_group_info_free_null(void) {
+    TEST("group_info_free handles NULL");
 
     // Should not crash
-    wispers_group_status_free(NULL);
+    wispers_group_info_free(NULL);
 
     PASS();
     return 0;
 }
 
-static int test_group_status_null_handle(void) {
-    TEST("group_status rejects NULL handle");
+static int test_group_info_null_handle(void) {
+    TEST("group_info rejects NULL handle");
 
-    GroupStatusTestCtx ctx = {0};
-    WispersStatus status = wispers_node_group_status_async(NULL, &ctx, group_status_callback);
+    GroupInfoTestCtx ctx = {0};
+    WispersStatus status = wispers_node_group_info_async(NULL, &ctx, group_info_callback);
 
     if (status != WISPERS_STATUS_NULL_POINTER) FAIL("expected NULL_POINTER");
 
@@ -573,8 +573,8 @@ static int test_group_status_null_handle(void) {
     return 0;
 }
 
-static int test_group_status_null_callback(void) {
-    TEST("group_status rejects NULL callback");
+static int test_group_info_null_callback(void) {
+    TEST("group_info rejects NULL callback");
 
     WispersNodeStorageHandle *storage = wispers_storage_new_in_memory();
     if (!storage) FAIL("failed to create storage");
@@ -588,7 +588,7 @@ static int test_group_status_null_callback(void) {
         FAIL("failed to get node handle");
     }
 
-    WispersStatus status = wispers_node_group_status_async(init_ctx.handle, NULL, NULL);
+    WispersStatus status = wispers_node_group_info_async(init_ctx.handle, NULL, NULL);
 
     wispers_node_free(init_ctx.handle);
     wispers_storage_free(storage);
@@ -599,8 +599,8 @@ static int test_group_status_null_callback(void) {
     return 0;
 }
 
-static int test_group_status_invalid_state(void) {
-    TEST("group_status returns INVALID_STATE for pending node");
+static int test_group_info_invalid_state(void) {
+    TEST("group_info returns INVALID_STATE for pending node");
 
     WispersNodeStorageHandle *storage = wispers_storage_new_in_memory();
     if (!storage) FAIL("failed to create storage");
@@ -615,8 +615,8 @@ static int test_group_status_invalid_state(void) {
         FAIL("failed to get pending node handle");
     }
 
-    GroupStatusTestCtx ctx = {0};
-    WispersStatus status = wispers_node_group_status_async(init_ctx.handle, &ctx, group_status_callback);
+    GroupInfoTestCtx ctx = {0};
+    WispersStatus status = wispers_node_group_info_async(init_ctx.handle, &ctx, group_info_callback);
 
     wispers_node_free(init_ctx.handle);
     wispers_storage_free(storage);
@@ -1023,10 +1023,10 @@ int main(void) {
 
     // Phase 6 tests
     printf("\n-- Phase 6: Node Listing --\n");
-    failures += test_group_status_free_null();
-    failures += test_group_status_null_handle();
-    failures += test_group_status_null_callback();
-    failures += test_group_status_invalid_state();
+    failures += test_group_info_free_null();
+    failures += test_group_info_null_handle();
+    failures += test_group_info_null_callback();
+    failures += test_group_info_invalid_state();
 
     // Phase 7 tests
     printf("\n-- Phase 7: Serving --\n");

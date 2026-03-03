@@ -7,7 +7,7 @@
 use crate::errors::{NodeStateError, WispersStatus};
 use crate::node::{Node, NodeStorage};
 use crate::storage::StorageError;
-use crate::types::{ActivationAction, GroupStatus, NodeRegistration};
+use crate::types::{GroupInfo, GroupState, NodeRegistration};
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::{c_char, c_int};
 use std::ptr;
@@ -203,10 +203,10 @@ pub extern "C" fn wispers_node_list_free(list: *mut WispersNodeList) {
 // Group status
 // =============================================================================
 
-/// Activation action indicator for FFI.
+/// Group state indicator for FFI.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum WispersActivationAction {
+pub enum WispersGroupState {
     Alone = 0,
     Bootstrap = 1,
     NeedActivation = 2,
@@ -214,42 +214,42 @@ pub enum WispersActivationAction {
     AllActivated = 4,
 }
 
-impl From<&ActivationAction> for WispersActivationAction {
-    fn from(action: &ActivationAction) -> Self {
-        match action {
-            ActivationAction::Alone => Self::Alone,
-            ActivationAction::Bootstrap => Self::Bootstrap,
-            ActivationAction::NeedActivation => Self::NeedActivation,
-            ActivationAction::CanEndorse => Self::CanEndorse,
-            ActivationAction::AllActivated => Self::AllActivated,
+impl From<&GroupState> for WispersGroupState {
+    fn from(state: &GroupState) -> Self {
+        match state {
+            GroupState::Alone => Self::Alone,
+            GroupState::Bootstrap => Self::Bootstrap,
+            GroupState::NeedActivation => Self::NeedActivation,
+            GroupState::CanEndorse => Self::CanEndorse,
+            GroupState::AllActivated => Self::AllActivated,
         }
     }
 }
 
-/// Group status returned to C callers.
+/// Group info returned to C callers.
 #[repr(C)]
-pub struct WispersGroupStatus {
-    pub action: WispersActivationAction,
+pub struct WispersGroupInfo {
+    pub state: WispersGroupState,
     pub nodes: *mut WispersNode,
     pub nodes_count: usize,
 }
 
-impl WispersGroupStatus {
-    /// Create from a GroupStatus, allocating C strings.
-    pub(crate) fn from_group_status(status: GroupStatus) -> Result<Self, WispersStatus> {
-        let action = WispersActivationAction::from(&status.action);
-        let count = status.nodes.len();
+impl WispersGroupInfo {
+    /// Create from a GroupInfo, allocating C strings.
+    pub(crate) fn from_group_info(info: GroupInfo) -> Result<Self, WispersStatus> {
+        let state = WispersGroupState::from(&info.state);
+        let count = info.nodes.len();
 
         if count == 0 {
             return Ok(Self {
-                action,
+                state,
                 nodes: ptr::null_mut(),
                 nodes_count: 0,
             });
         }
 
         let mut c_nodes: Vec<WispersNode> = Vec::with_capacity(count);
-        for node in status.nodes {
+        for node in info.nodes {
             let name = CString::new(node.name).map_err(|_| WispersStatus::InvalidUtf8)?;
             let activation_status = match node.is_activated {
                 None => WISPERS_ACTIVATION_UNKNOWN,
@@ -270,30 +270,30 @@ impl WispersGroupStatus {
         std::mem::forget(c_nodes);
 
         Ok(Self {
-            action,
+            state,
             nodes: nodes_ptr,
             nodes_count: count,
         })
     }
 }
 
-/// Callback that receives a group status.
-pub type WispersGroupStatusCallback = Option<
+/// Callback that receives group info.
+pub type WispersGroupInfoCallback = Option<
     unsafe extern "C" fn(
         ctx: *mut c_void,
         status: WispersStatus,
         error_detail: *const c_char,
-        group_status: *mut WispersGroupStatus,
+        group_info: *mut WispersGroupInfo,
     ),
 >;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn wispers_group_status_free(group_status: *mut WispersGroupStatus) {
-    if group_status.is_null() {
+pub extern "C" fn wispers_group_info_free(group_info: *mut WispersGroupInfo) {
+    if group_info.is_null() {
         return;
     }
     unsafe {
-        let gs = &mut *group_status;
+        let gs = &mut *group_info;
         if !gs.nodes.is_null() && gs.nodes_count > 0 {
             let nodes = Vec::from_raw_parts(gs.nodes, gs.nodes_count, gs.nodes_count);
             for node in nodes {

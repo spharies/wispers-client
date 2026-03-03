@@ -38,28 +38,28 @@ const (
 	ActivationActivated    ActivationStatus = 2
 )
 
-// ActivationAction represents what action the calling node should take.
-type ActivationAction int32
+// GroupState represents the activation state of the connectivity group.
+type GroupState int32
 
 const (
-	ActivationActionAlone          ActivationAction = 0
-	ActivationActionBootstrap      ActivationAction = 1
-	ActivationActionNeedActivation ActivationAction = 2
-	ActivationActionCanEndorse     ActivationAction = 3
-	ActivationActionAllActivated   ActivationAction = 4
+	GroupStateAlone          GroupState = 0
+	GroupStateBootstrap      GroupState = 1
+	GroupStateNeedActivation GroupState = 2
+	GroupStateCanEndorse     GroupState = 3
+	GroupStateAllActivated   GroupState = 4
 )
 
-func (a ActivationAction) String() string {
-	switch a {
-	case ActivationActionAlone:
+func (s GroupState) String() string {
+	switch s {
+	case GroupStateAlone:
 		return "Alone"
-	case ActivationActionBootstrap:
+	case GroupStateBootstrap:
 		return "Bootstrap"
-	case ActivationActionNeedActivation:
+	case GroupStateNeedActivation:
 		return "NeedActivation"
-	case ActivationActionCanEndorse:
+	case GroupStateCanEndorse:
 		return "CanEndorse"
-	case ActivationActionAllActivated:
+	case GroupStateAllActivated:
 		return "AllActivated"
 	default:
 		return "Unknown"
@@ -76,10 +76,10 @@ type NodeInfo struct {
 	IsOnline         bool
 }
 
-// GroupStatus is a snapshot of the connectivity group's activation state.
-type GroupStatus struct {
-	Action ActivationAction
-	Nodes  []NodeInfo
+// GroupInfo is a snapshot of the connectivity group's activation state.
+type GroupInfo struct {
+	State GroupState
+	Nodes []NodeInfo
 }
 
 // RegistrationInfo contains registration information for a node.
@@ -103,10 +103,10 @@ type startServingResult struct {
 	incomingPtr unsafe.Pointer
 }
 
-// groupStatusResult is the internal type sent through the bridge channel for GroupStatus.
-type groupStatusResult struct {
-	action ActivationAction
-	nodes  []NodeInfo
+// groupInfoResult is the internal type sent through the bridge channel for GroupInfo.
+type groupInfoResult struct {
+	state GroupState
+	nodes []NodeInfo
 }
 
 // dataResult is the internal type sent through the bridge channel for data callbacks.

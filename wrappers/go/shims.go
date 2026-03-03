@@ -31,19 +31,19 @@ func goWispersInitCallback(ctx unsafe.Pointer, status C.int, detail *C.char, nod
 	resolvePendingCall(ctx, initResult{nodePtr: nodeHandle, state: NodeState(state)})
 }
 
-//export goWispersGroupStatusCallback
-func goWispersGroupStatusCallback(ctx unsafe.Pointer, status C.int, detail *C.char, gs unsafe.Pointer) {
+//export goWispersGroupInfoCallback
+func goWispersGroupInfoCallback(ctx unsafe.Pointer, status C.int, detail *C.char, gi unsafe.Pointer) {
 	if int(status) != 0 {
 		resolvePendingCall(ctx, &Error{Status: Status(status), Detail: C.GoString(detail)})
 		return
 	}
 	// Copy data out of the C struct before resolving.
-	cGS := (*C.WispersGroupStatus)(gs)
-	action := ActivationAction(cGS.action)
-	count := int(cGS.nodes_count)
+	cGI := (*C.WispersGroupInfo)(gi)
+	state := GroupState(cGI.state)
+	count := int(cGI.nodes_count)
 	nodes := make([]NodeInfo, count)
 	if count > 0 {
-		cNodes := unsafe.Slice((*C.WispersNode)(unsafe.Pointer(cGS.nodes)), count)
+		cNodes := unsafe.Slice((*C.WispersNode)(unsafe.Pointer(cGI.nodes)), count)
 		for i := 0; i < count; i++ {
 			nodes[i] = NodeInfo{
 				NodeNumber:       int32(cNodes[i].node_number),
@@ -55,8 +55,8 @@ func goWispersGroupStatusCallback(ctx unsafe.Pointer, status C.int, detail *C.ch
 			}
 		}
 	}
-	C.wispers_group_status_free((*C.WispersGroupStatus)(gs))
-	resolvePendingCall(ctx, groupStatusResult{action: action, nodes: nodes})
+	C.wispers_group_info_free((*C.WispersGroupInfo)(gi))
+	resolvePendingCall(ctx, groupInfoResult{state: state, nodes: nodes})
 }
 
 //export goWispersStartServingCallback

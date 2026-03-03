@@ -113,12 +113,12 @@ interface NativeLibrary : Library {
     ): Int
 
     /**
-     * Get the group's activation status and node list.
+     * Get the group's activation state and node list.
      */
-    fun wispers_node_group_status_async(
+    fun wispers_node_group_info_async(
         handle: Pointer?,
         ctx: Pointer?,
-        callback: NativeCallbacks.WispersGroupStatusCallback?
+        callback: NativeCallbacks.WispersGroupInfoCallback?
     ): Int
 
     /**
@@ -345,9 +345,9 @@ interface NativeLibrary : Library {
     fun wispers_registration_info_free(info: NativeTypes.WispersRegistrationInfo?)
 
     /**
-     * Free a group status and all contained strings.
+     * Free a group info and all contained strings.
      */
-    fun wispers_group_status_free(groupStatus: Pointer?)
+    fun wispers_group_info_free(groupInfo: Pointer?)
 
     /**
      * Free a node list and all contained strings.
