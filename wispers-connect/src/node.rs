@@ -128,11 +128,23 @@ impl NodeStorage {
             .await
             .map_err(NodeStateError::hub)?;
 
-        // Fetch unverified first - we need to check if we're in it before we can verify
-        let roster = client
-            .get_unverified_roster(registration)
-            .await
-            .map_err(NodeStateError::hub)?;
+        // Fetch unverified first - we need to check if we're in it before we can verify.
+        // If the hub says unauthenticated, our node was removed server-side (e.g. group
+        // reset). Wipe local state and start fresh.
+        let roster = match client.get_unverified_roster(registration).await {
+            Ok(r) => r,
+            Err(e) if e.is_unauthenticated() || e.is_not_found() => {
+                self.store.delete().map_err(NodeStateError::store)?;
+                let fresh = PersistedNodeState::new();
+                self.store.save(&fresh).map_err(NodeStateError::store)?;
+                return Ok(Node::new_pending(
+                    fresh,
+                    self.store.clone(),
+                    self.config.clone(),
+                ));
+            }
+            Err(e) => return Err(NodeStateError::hub(e)),
+        };
 
         // Check if our node is in the roster
         let is_activated = roster
@@ -904,10 +916,12 @@ impl Node {
                 let mut client = HubClient::connect(self.hub_addr())
                     .await
                     .map_err(NodeStateError::hub)?;
-                client
-                    .deregister_node(registration)
-                    .await
-                    .map_err(NodeStateError::hub)?;
+                // If unauthenticated, node was already removed server-side — just clean up locally.
+                match client.deregister_node(registration).await {
+                    Ok(()) => {}
+                    Err(e) if e.is_unauthenticated() || e.is_not_found() => {}
+                    Err(e) => return Err(NodeStateError::hub(e)),
+                }
                 self.store.delete().map_err(NodeStateError::store)
             }
             NodeState::Activated => {
@@ -945,16 +959,19 @@ impl Node {
                     signature,
                 );
 
-                client
-                    .update_roster(registration, new_roster)
-                    .await
-                    .map_err(NodeStateError::hub)?;
-
-                // Step 2: Deregister from hub
-                client
-                    .deregister_node(registration)
-                    .await
-                    .map_err(NodeStateError::hub)?;
+                // If unauthenticated, node was already removed server-side — skip to local cleanup.
+                match client.update_roster(registration, new_roster).await {
+                    Ok(_) => {
+                        // Step 2: Deregister from hub
+                        match client.deregister_node(registration).await {
+                            Ok(()) => {}
+                            Err(e) if e.is_unauthenticated() || e.is_not_found() => {}
+                            Err(e) => return Err(NodeStateError::hub(e)),
+                        }
+                    }
+                    Err(e) if e.is_unauthenticated() || e.is_not_found() => {}
+                    Err(e) => return Err(NodeStateError::hub(e)),
+                }
 
                 // Step 3: Delete local state
                 self.store.delete().map_err(NodeStateError::store)
