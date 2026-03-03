@@ -77,7 +77,9 @@ typedef struct {
 //------------------------------------------------------------------------------
 
 // Basic completion callback (no result value).
-typedef void (*WispersCallback)(void *ctx, WispersStatus status);
+// error_detail is a human-readable string on error (NULL on success).
+// The string is only valid during the callback invocation.
+typedef void (*WispersCallback)(void *ctx, WispersStatus status, const char *error_detail);
 
 // Callback for restore_or_init. Returns a single node handle and its current state.
 // The handle can be used for all operations; state-inappropriate operations
@@ -85,6 +87,7 @@ typedef void (*WispersCallback)(void *ctx, WispersStatus status);
 typedef void (*WispersInitCallback)(
     void *ctx,
     WispersStatus status,
+    const char *error_detail,
     WispersNodeHandle *handle,
     WispersNodeState state
 );
@@ -116,6 +119,7 @@ void wispers_node_list_free(WispersNodeList *list);
 typedef void (*WispersNodeListCallback)(
     void *ctx,
     WispersStatus status,
+    const char *error_detail,
     WispersNodeList *list
 );
 
@@ -125,6 +129,7 @@ typedef void (*WispersNodeListCallback)(
 typedef void (*WispersStartServingCallback)(
     void *ctx,
     WispersStatus status,
+    const char *error_detail,
     WispersServingHandle *serving_handle,
     WispersServingSession *session,
     WispersIncomingConnections *incoming
@@ -135,6 +140,7 @@ typedef void (*WispersStartServingCallback)(
 typedef void (*WispersPairingCodeCallback)(
     void *ctx,
     WispersStatus status,
+    const char *error_detail,
     char *pairing_code
 );
 
@@ -142,6 +148,7 @@ typedef void (*WispersPairingCodeCallback)(
 typedef void (*WispersUdpConnectionCallback)(
     void *ctx,
     WispersStatus status,
+    const char *error_detail,
     WispersUdpConnectionHandle *connection
 );
 
@@ -150,6 +157,7 @@ typedef void (*WispersUdpConnectionCallback)(
 typedef void (*WispersDataCallback)(
     void *ctx,
     WispersStatus status,
+    const char *error_detail,
     const uint8_t *data,
     size_t len
 );
@@ -158,6 +166,7 @@ typedef void (*WispersDataCallback)(
 typedef void (*WispersQuicConnectionCallback)(
     void *ctx,
     WispersStatus status,
+    const char *error_detail,
     WispersQuicConnectionHandle *connection
 );
 
@@ -165,6 +174,7 @@ typedef void (*WispersQuicConnectionCallback)(
 typedef void (*WispersQuicStreamCallback)(
     void *ctx,
     WispersStatus status,
+    const char *error_detail,
     WispersQuicStreamHandle *stream
 );
 

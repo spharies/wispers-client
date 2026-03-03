@@ -7,15 +7,15 @@
 #include "wispers_connect.h"
 
 // Forward declarations for //export functions in shims.go.
-extern void goWispersCallback(void *ctx, int status);
-extern void goWispersInitCallback(void *ctx, int status, void *handle, int state);
-extern void goWispersNodeListCallback(void *ctx, int status, WispersNodeList *list);
-extern void goWispersStartServingCallback(void *ctx, int status, void *serving, void *session, void *incoming);
-extern void goWispersPairingCodeCallback(void *ctx, int status, char *code);
-extern void goWispersUdpConnectionCallback(void *ctx, int status, void *conn);
-extern void goWispersDataCallback(void *ctx, int status, const uint8_t *data, size_t len);
-extern void goWispersQuicConnectionCallback(void *ctx, int status, void *conn);
-extern void goWispersQuicStreamCallback(void *ctx, int status, void *stream);
+extern void goWispersCallback(void *ctx, int status, const char *detail);
+extern void goWispersInitCallback(void *ctx, int status, const char *detail, void *handle, int state);
+extern void goWispersNodeListCallback(void *ctx, int status, const char *detail, WispersNodeList *list);
+extern void goWispersStartServingCallback(void *ctx, int status, const char *detail, void *serving, void *session, void *incoming);
+extern void goWispersPairingCodeCallback(void *ctx, int status, const char *detail, char *code);
+extern void goWispersUdpConnectionCallback(void *ctx, int status, const char *detail, void *conn);
+extern void goWispersDataCallback(void *ctx, int status, const char *detail, const uint8_t *data, size_t len);
+extern void goWispersQuicConnectionCallback(void *ctx, int status, const char *detail, void *conn);
+extern void goWispersQuicStreamCallback(void *ctx, int status, const char *detail, void *stream);
 
 // Storage callback forward declarations.
 extern int goStorageLoadRootKey(void *ctx, uint8_t *out_key, size_t out_key_len);
@@ -27,40 +27,40 @@ extern int goStorageDeleteRegistration(void *ctx);
 
 // Shim callback functions that cast Go exports to correct C function pointer types.
 
-static inline void shimWispersCallback(void *ctx, WispersStatus status) {
-	goWispersCallback(ctx, (int)status);
+static inline void shimWispersCallback(void *ctx, WispersStatus status, const char *detail) {
+	goWispersCallback(ctx, (int)status, detail);
 }
 
-static inline void shimWispersInitCallback(void *ctx, WispersStatus status, WispersNodeHandle *handle, WispersNodeState state) {
-	goWispersInitCallback(ctx, (int)status, (void*)handle, (int)state);
+static inline void shimWispersInitCallback(void *ctx, WispersStatus status, const char *detail, WispersNodeHandle *handle, WispersNodeState state) {
+	goWispersInitCallback(ctx, (int)status, detail, (void*)handle, (int)state);
 }
 
-static inline void shimWispersNodeListCallback(void *ctx, WispersStatus status, WispersNodeList *list) {
-	goWispersNodeListCallback(ctx, (int)status, list);
+static inline void shimWispersNodeListCallback(void *ctx, WispersStatus status, const char *detail, WispersNodeList *list) {
+	goWispersNodeListCallback(ctx, (int)status, detail, list);
 }
 
-static inline void shimWispersStartServingCallback(void *ctx, WispersStatus status, WispersServingHandle *serving, WispersServingSession *session, WispersIncomingConnections *incoming) {
-	goWispersStartServingCallback(ctx, (int)status, (void*)serving, (void*)session, (void*)incoming);
+static inline void shimWispersStartServingCallback(void *ctx, WispersStatus status, const char *detail, WispersServingHandle *serving, WispersServingSession *session, WispersIncomingConnections *incoming) {
+	goWispersStartServingCallback(ctx, (int)status, detail, (void*)serving, (void*)session, (void*)incoming);
 }
 
-static inline void shimWispersPairingCodeCallback(void *ctx, WispersStatus status, char *code) {
-	goWispersPairingCodeCallback(ctx, (int)status, code);
+static inline void shimWispersPairingCodeCallback(void *ctx, WispersStatus status, const char *detail, char *code) {
+	goWispersPairingCodeCallback(ctx, (int)status, detail, code);
 }
 
-static inline void shimWispersUdpConnectionCallback(void *ctx, WispersStatus status, WispersUdpConnectionHandle *conn) {
-	goWispersUdpConnectionCallback(ctx, (int)status, (void*)conn);
+static inline void shimWispersUdpConnectionCallback(void *ctx, WispersStatus status, const char *detail, WispersUdpConnectionHandle *conn) {
+	goWispersUdpConnectionCallback(ctx, (int)status, detail, (void*)conn);
 }
 
-static inline void shimWispersDataCallback(void *ctx, WispersStatus status, const uint8_t *data, size_t len) {
-	goWispersDataCallback(ctx, (int)status, data, len);
+static inline void shimWispersDataCallback(void *ctx, WispersStatus status, const char *detail, const uint8_t *data, size_t len) {
+	goWispersDataCallback(ctx, (int)status, detail, data, len);
 }
 
-static inline void shimWispersQuicConnectionCallback(void *ctx, WispersStatus status, WispersQuicConnectionHandle *conn) {
-	goWispersQuicConnectionCallback(ctx, (int)status, (void*)conn);
+static inline void shimWispersQuicConnectionCallback(void *ctx, WispersStatus status, const char *detail, WispersQuicConnectionHandle *conn) {
+	goWispersQuicConnectionCallback(ctx, (int)status, detail, (void*)conn);
 }
 
-static inline void shimWispersQuicStreamCallback(void *ctx, WispersStatus status, WispersQuicStreamHandle *stream) {
-	goWispersQuicStreamCallback(ctx, (int)status, (void*)stream);
+static inline void shimWispersQuicStreamCallback(void *ctx, WispersStatus status, const char *detail, WispersQuicStreamHandle *stream) {
+	goWispersQuicStreamCallback(ctx, (int)status, detail, (void*)stream);
 }
 
 // Helper to build storage callbacks struct with Go shims.

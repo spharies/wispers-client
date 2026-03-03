@@ -91,40 +91,45 @@ sealed class WispersException(
     companion object {
         /**
          * Create an appropriate exception for the given status code.
+         *
+         * @param detail Optional human-readable detail from the Rust library.
          */
-        fun fromStatus(code: Int): WispersException {
+        fun fromStatus(code: Int, detail: String? = null): WispersException {
             val status = try {
                 WispersStatus.fromCode(code)
             } catch (e: IllegalArgumentException) {
-                return Unknown(WispersStatus.SUCCESS, "Unknown status code: $code")
+                return Unknown(WispersStatus.SUCCESS, detail ?: "Unknown status code: $code")
             }
-            return fromStatus(status)
+            return fromStatus(status, detail)
         }
 
         /**
          * Create an appropriate exception for the given status.
+         *
+         * @param detail Optional human-readable detail from the Rust library.
+         *               When provided, used as the exception message instead of the default.
          */
         @Suppress("DEPRECATION")
-        fun fromStatus(status: WispersStatus): WispersException = when (status) {
+        fun fromStatus(status: WispersStatus, detail: String? = null): WispersException = when (status) {
             WispersStatus.SUCCESS -> throw IllegalArgumentException("Cannot create exception for SUCCESS")
-            WispersStatus.NULL_POINTER -> NullPointer()
-            WispersStatus.INVALID_UTF8 -> InvalidUtf8()
-            WispersStatus.STORE_ERROR -> StoreError()
-            WispersStatus.ALREADY_REGISTERED -> AlreadyRegistered()
-            WispersStatus.NOT_REGISTERED -> NotRegistered()
-            WispersStatus.UNEXPECTED_STAGE -> UnexpectedStage()
-            WispersStatus.NOT_FOUND -> NotFound()
-            WispersStatus.BUFFER_TOO_SMALL -> BufferTooSmall()
-            WispersStatus.MISSING_CALLBACK -> MissingCallback()
-            WispersStatus.INVALID_PAIRING_CODE -> InvalidPairingCode()
-            WispersStatus.ACTIVATION_FAILED -> ActivationFailed()
-            WispersStatus.HUB_ERROR -> HubError()
-            WispersStatus.CONNECTION_FAILED -> ConnectionFailed()
-            WispersStatus.TIMEOUT -> Timeout()
-            WispersStatus.INVALID_STATE -> InvalidState()
-            WispersStatus.UNAUTHENTICATED -> Unauthenticated()
-            WispersStatus.PEER_REJECTED -> PeerRejected()
-            WispersStatus.PEER_UNAVAILABLE -> PeerUnavailable()
+            WispersStatus.NULL_POINTER -> NullPointer(detail ?: "Null pointer")
+            WispersStatus.INVALID_UTF8 -> InvalidUtf8(detail ?: "Invalid UTF-8 string")
+            WispersStatus.STORE_ERROR -> StoreError(detail ?: "Storage error")
+            WispersStatus.ALREADY_REGISTERED -> AlreadyRegistered(detail ?: "Node is already registered")
+            WispersStatus.NOT_REGISTERED -> NotRegistered(detail ?: "Node is not registered")
+            WispersStatus.UNEXPECTED_STAGE -> UnexpectedStage(detail ?: "Unexpected stage")
+            WispersStatus.NOT_FOUND -> NotFound(detail ?: "Not found")
+            WispersStatus.BUFFER_TOO_SMALL -> BufferTooSmall(detail ?: "Buffer too small")
+            WispersStatus.MISSING_CALLBACK -> MissingCallback(detail ?: "Missing callback")
+            WispersStatus.INVALID_PAIRING_CODE -> InvalidPairingCode(detail ?: "Invalid pairing code")
+            WispersStatus.ACTIVATION_FAILED -> ActivationFailed(detail ?: "Activation failed")
+            WispersStatus.HUB_ERROR -> HubError(detail ?: "Hub error")
+            WispersStatus.CONNECTION_FAILED -> ConnectionFailed(detail ?: "Connection failed")
+            WispersStatus.TIMEOUT -> Timeout(detail ?: "Timeout")
+            WispersStatus.INVALID_STATE -> InvalidState(detail ?: "Invalid state for operation")
+            WispersStatus.UNAUTHENTICATED -> Unauthenticated(detail ?: "Node removed from connectivity group")
+            WispersStatus.PEER_REJECTED -> PeerRejected(detail ?: "Peer rejected request")
+            WispersStatus.PEER_UNAVAILABLE -> PeerUnavailable(detail ?: "Peer unavailable")
         }
     }
 }

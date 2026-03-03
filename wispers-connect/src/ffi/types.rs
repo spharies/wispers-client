@@ -66,7 +66,8 @@ pub enum WispersNodeState {
 /// Basic completion callback (no result value).
 ///
 /// Called when an async operation completes, with status indicating success/failure.
-pub type WispersCallback = Option<unsafe extern "C" fn(ctx: *mut c_void, status: WispersStatus)>;
+pub type WispersCallback =
+    Option<unsafe extern "C" fn(ctx: *mut c_void, status: WispersStatus, error_detail: *const c_char)>;
 
 /// Callback that receives a node handle and state indicator.
 ///
@@ -76,6 +77,7 @@ pub type WispersInitCallback = Option<
     unsafe extern "C" fn(
         ctx: *mut c_void,
         status: WispersStatus,
+        error_detail: *const c_char,
         handle: *mut WispersNodeHandle,
         state: WispersNodeState,
     ),
@@ -83,7 +85,12 @@ pub type WispersInitCallback = Option<
 
 /// Callback that receives a node list.
 pub type WispersNodeListCallback = Option<
-    unsafe extern "C" fn(ctx: *mut c_void, status: WispersStatus, list: *mut WispersNodeList),
+    unsafe extern "C" fn(
+        ctx: *mut c_void,
+        status: WispersStatus,
+        error_detail: *const c_char,
+        list: *mut WispersNodeList,
+    ),
 >;
 
 // =============================================================================

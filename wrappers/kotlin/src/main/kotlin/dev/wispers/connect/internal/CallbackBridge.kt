@@ -73,12 +73,13 @@ object CallbackBridge {
      *
      * @param ctx The context pointer passed to the C callback
      * @param status The C status code (non-zero indicates error)
+     * @param errorDetail Optional human-readable detail from the Rust library
      */
-    fun resumeWithStatus(ctx: Pointer?, status: Int) {
+    fun resumeWithStatus(ctx: Pointer?, status: Int, errorDetail: String? = null) {
         if (status == WispersStatus.SUCCESS.code) {
             resumeSuccess(ctx, Unit)
         } else {
-            resumeException(ctx, WispersException.fromStatus(status))
+            resumeException(ctx, WispersException.fromStatus(status, errorDetail))
         }
     }
 }
@@ -98,62 +99,62 @@ object Callbacks {
     /**
      * Basic completion callback - resumes with Unit on success.
      */
-    val basic = NativeCallbacks.WispersCallback { ctx, status ->
-        CallbackBridge.resumeWithStatus(ctx, status)
+    val basic = NativeCallbacks.WispersCallback { ctx, status, errorDetail ->
+        CallbackBridge.resumeWithStatus(ctx, status, errorDetail)
     }
 
     /**
      * Init callback - resumes with (Pointer, NodeState) pair on success.
      */
-    val init = NativeCallbacks.WispersInitCallback { ctx, status, handle, state ->
+    val init = NativeCallbacks.WispersInitCallback { ctx, status, errorDetail, handle, state ->
         if (status == WispersStatus.SUCCESS.code) {
             CallbackBridge.resumeSuccess(ctx, Pair(handle, state))
         } else {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status, errorDetail))
         }
     }
 
     /**
      * Node list callback - resumes with Pointer to node list on success.
      */
-    val nodeList = NativeCallbacks.WispersNodeListCallback { ctx, status, list ->
+    val nodeList = NativeCallbacks.WispersNodeListCallback { ctx, status, errorDetail, list ->
         if (status == WispersStatus.SUCCESS.code) {
             CallbackBridge.resumeSuccess(ctx, list)
         } else {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status, errorDetail))
         }
     }
 
     /**
      * Start serving callback - resumes with triple of handles on success.
      */
-    val startServing = NativeCallbacks.WispersStartServingCallback { ctx, status, servingHandle, session, incoming ->
+    val startServing = NativeCallbacks.WispersStartServingCallback { ctx, status, errorDetail, servingHandle, session, incoming ->
         if (status == WispersStatus.SUCCESS.code) {
             CallbackBridge.resumeSuccess(ctx, Triple(servingHandle, session, incoming))
         } else {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status, errorDetail))
         }
     }
 
     /**
      * Pairing code callback - resumes with Pointer to string on success.
      */
-    val pairingCode = NativeCallbacks.WispersPairingCodeCallback { ctx, status, pairingCode ->
+    val pairingCode = NativeCallbacks.WispersPairingCodeCallback { ctx, status, errorDetail, pairingCode ->
         if (status == WispersStatus.SUCCESS.code) {
             CallbackBridge.resumeSuccess(ctx, pairingCode)
         } else {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status, errorDetail))
         }
     }
 
     /**
      * UDP connection callback - resumes with Pointer to connection on success.
      */
-    val udpConnection = NativeCallbacks.WispersUdpConnectionCallback { ctx, status, connection ->
+    val udpConnection = NativeCallbacks.WispersUdpConnectionCallback { ctx, status, errorDetail, connection ->
         if (status == WispersStatus.SUCCESS.code) {
             CallbackBridge.resumeSuccess(ctx, connection)
         } else {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status, errorDetail))
         }
     }
 
@@ -161,7 +162,7 @@ object Callbacks {
      * Data callback - resumes with ByteArray on success.
      * The data buffer from C is only valid during the callback, so we copy it.
      */
-    val data = NativeCallbacks.WispersDataCallback { ctx, status, data, len ->
+    val data = NativeCallbacks.WispersDataCallback { ctx, status, errorDetail, data, len ->
         if (status == WispersStatus.SUCCESS.code) {
             val bytes = if (data != null && len > 0) {
                 data.getByteArray(0, len.toInt())
@@ -170,29 +171,29 @@ object Callbacks {
             }
             CallbackBridge.resumeSuccess(ctx, bytes)
         } else {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status, errorDetail))
         }
     }
 
     /**
      * QUIC connection callback - resumes with Pointer to connection on success.
      */
-    val quicConnection = NativeCallbacks.WispersQuicConnectionCallback { ctx, status, connection ->
+    val quicConnection = NativeCallbacks.WispersQuicConnectionCallback { ctx, status, errorDetail, connection ->
         if (status == WispersStatus.SUCCESS.code) {
             CallbackBridge.resumeSuccess(ctx, connection)
         } else {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status, errorDetail))
         }
     }
 
     /**
      * QUIC stream callback - resumes with Pointer to stream on success.
      */
-    val quicStream = NativeCallbacks.WispersQuicStreamCallback { ctx, status, stream ->
+    val quicStream = NativeCallbacks.WispersQuicStreamCallback { ctx, status, errorDetail, stream ->
         if (status == WispersStatus.SUCCESS.code) {
             CallbackBridge.resumeSuccess(ctx, stream)
         } else {
-            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status))
+            CallbackBridge.resumeException(ctx, WispersException.fromStatus(status, errorDetail))
         }
     }
 }

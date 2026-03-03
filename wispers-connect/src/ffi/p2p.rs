@@ -4,8 +4,9 @@ use super::types::{CallbackContext, WispersCallback, WispersNodeHandle};
 use super::runtime;
 use crate::errors::WispersStatus;
 use crate::p2p::{P2pError, QuicConnection, QuicStream, UdpConnection};
-use std::ffi::c_void;
-use std::os::raw::c_int;
+use std::ffi::{c_void, CString};
+use std::os::raw::{c_char, c_int};
+use std::ptr;
 
 fn p2p_error_to_status(e: &P2pError) -> WispersStatus {
     match e {
@@ -49,6 +50,7 @@ pub type WispersUdpConnectionCallback = Option<
     unsafe extern "C" fn(
         ctx: *mut c_void,
         status: WispersStatus,
+        error_detail: *const c_char,
         connection: *mut WispersUdpConnectionHandle,
     ),
 >;
@@ -58,6 +60,7 @@ pub type WispersDataCallback = Option<
     unsafe extern "C" fn(
         ctx: *mut c_void,
         status: WispersStatus,
+        error_detail: *const c_char,
         data: *const u8,
         len: usize,
     ),
@@ -107,12 +110,13 @@ pub extern "C" fn wispers_node_connect_udp_async(
             Ok(conn) => {
                 let h = Box::into_raw(Box::new(WispersUdpConnectionHandle(conn)));
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success, h);
+                    callback(ctx.ptr(), WispersStatus::Success, ptr::null(), h);
                 }
             }
             Err(ref e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), p2p_error_to_status(e), std::ptr::null_mut());
+                    callback(ctx.ptr(), p2p_error_to_status(e), detail.as_ptr(), ptr::null_mut());
                 }
             }
         }
@@ -178,12 +182,13 @@ pub extern "C" fn wispers_udp_connection_recv_async(
         match result {
             Ok(data) => {
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success, data.as_ptr(), data.len());
+                    callback(ctx.ptr(), WispersStatus::Success, ptr::null(), data.as_ptr(), data.len());
                 }
             }
-            Err(_) => {
+            Err(e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, std::ptr::null(), 0);
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, detail.as_ptr(), ptr::null(), 0);
                 }
             }
         }
@@ -239,6 +244,7 @@ pub type WispersQuicConnectionCallback = Option<
     unsafe extern "C" fn(
         ctx: *mut c_void,
         status: WispersStatus,
+        error_detail: *const c_char,
         connection: *mut WispersQuicConnectionHandle,
     ),
 >;
@@ -248,6 +254,7 @@ pub type WispersQuicStreamCallback = Option<
     unsafe extern "C" fn(
         ctx: *mut c_void,
         status: WispersStatus,
+        error_detail: *const c_char,
         stream: *mut WispersQuicStreamHandle,
     ),
 >;
@@ -306,12 +313,13 @@ pub extern "C" fn wispers_node_connect_quic_async(
             Ok(conn) => {
                 let h = Box::into_raw(Box::new(WispersQuicConnectionHandle(conn)));
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success, h);
+                    callback(ctx.ptr(), WispersStatus::Success, ptr::null(), h);
                 }
             }
             Err(ref e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), p2p_error_to_status(e), std::ptr::null_mut());
+                    callback(ctx.ptr(), p2p_error_to_status(e), detail.as_ptr(), ptr::null_mut());
                 }
             }
         }
@@ -350,12 +358,13 @@ pub extern "C" fn wispers_quic_connection_open_stream_async(
             Ok(stream) => {
                 let h = Box::into_raw(Box::new(WispersQuicStreamHandle(stream)));
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success, h);
+                    callback(ctx.ptr(), WispersStatus::Success, ptr::null(), h);
                 }
             }
-            Err(_) => {
+            Err(e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, std::ptr::null_mut());
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, detail.as_ptr(), ptr::null_mut());
                 }
             }
         }
@@ -394,12 +403,13 @@ pub extern "C" fn wispers_quic_connection_accept_stream_async(
             Ok(stream) => {
                 let h = Box::into_raw(Box::new(WispersQuicStreamHandle(stream)));
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success, h);
+                    callback(ctx.ptr(), WispersStatus::Success, ptr::null(), h);
                 }
             }
-            Err(_) => {
+            Err(e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, std::ptr::null_mut());
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, detail.as_ptr(), ptr::null_mut());
                 }
             }
         }
@@ -434,14 +444,13 @@ pub extern "C" fn wispers_quic_connection_close_async(
         let result = conn.0.close().await;
 
         match result {
-            Ok(()) => {
+            Ok(()) => unsafe {
+                callback(ctx.ptr(), WispersStatus::Success, ptr::null());
+            },
+            Err(e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success);
-                }
-            }
-            Err(_) => {
-                unsafe {
-                    callback(ctx.ptr(), WispersStatus::ConnectionFailed);
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, detail.as_ptr());
                 }
             }
         }
@@ -487,15 +496,14 @@ pub extern "C" fn wispers_quic_stream_write_async(
         let result = stream.write_all(&data_owned).await;
 
         match result {
-            Ok(()) => {
-                unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success);
-                }
-            }
+            Ok(()) => unsafe {
+                callback(ctx.ptr(), WispersStatus::Success, ptr::null());
+            },
             Err(e) => {
                 log::error!("[wispers FFI] quic_stream_write error: {:?}", e);
+                let detail = CString::new(e.to_string()).unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::ConnectionFailed);
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, detail.as_ptr());
                 }
             }
         }
@@ -537,13 +545,14 @@ pub extern "C" fn wispers_quic_stream_read_async(
         match result {
             Ok(n) => {
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success, buf.as_ptr(), n);
+                    callback(ctx.ptr(), WispersStatus::Success, ptr::null(), buf.as_ptr(), n);
                 }
             }
             Err(e) => {
                 log::error!("[wispers FFI] quic_stream_read error: {:?}", e);
+                let detail = CString::new(e.to_string()).unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, std::ptr::null(), 0);
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, detail.as_ptr(), ptr::null(), 0);
                 }
             }
         }
@@ -580,15 +589,14 @@ pub extern "C" fn wispers_quic_stream_finish_async(
         let result = stream.finish().await;
 
         match result {
-            Ok(()) => {
-                unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success);
-                }
-            }
+            Ok(()) => unsafe {
+                callback(ctx.ptr(), WispersStatus::Success, ptr::null());
+            },
             Err(e) => {
                 log::error!("[wispers FFI] quic_stream_finish error: {:?}", e);
+                let detail = CString::new(e.to_string()).unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::ConnectionFailed);
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, detail.as_ptr());
                 }
             }
         }
@@ -624,14 +632,13 @@ pub extern "C" fn wispers_quic_stream_shutdown_async(
         let result = stream.shutdown().await;
 
         match result {
-            Ok(()) => {
+            Ok(()) => unsafe {
+                callback(ctx.ptr(), WispersStatus::Success, ptr::null());
+            },
+            Err(e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success);
-                }
-            }
-            Err(_) => {
-                unsafe {
-                    callback(ctx.ptr(), WispersStatus::ConnectionFailed);
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, detail.as_ptr());
                 }
             }
         }

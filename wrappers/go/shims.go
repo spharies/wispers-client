@@ -14,23 +14,27 @@ import (
 )
 
 //export goWispersCallback
-func goWispersCallback(ctx unsafe.Pointer, status C.int) {
-	resolvePendingCall(ctx, errorFromStatus(int(status)))
+func goWispersCallback(ctx unsafe.Pointer, status C.int, detail *C.char) {
+	if int(status) != 0 {
+		resolvePendingCall(ctx, &Error{Status: Status(status), Detail: C.GoString(detail)})
+		return
+	}
+	resolvePendingCall(ctx, error(nil))
 }
 
 //export goWispersInitCallback
-func goWispersInitCallback(ctx unsafe.Pointer, status C.int, nodeHandle unsafe.Pointer, state C.int) {
+func goWispersInitCallback(ctx unsafe.Pointer, status C.int, detail *C.char, nodeHandle unsafe.Pointer, state C.int) {
 	if int(status) != 0 {
-		resolvePendingCall(ctx, errorFromStatus(int(status)))
+		resolvePendingCall(ctx, &Error{Status: Status(status), Detail: C.GoString(detail)})
 		return
 	}
 	resolvePendingCall(ctx, initResult{nodePtr: nodeHandle, state: NodeState(state)})
 }
 
 //export goWispersNodeListCallback
-func goWispersNodeListCallback(ctx unsafe.Pointer, status C.int, list unsafe.Pointer) {
+func goWispersNodeListCallback(ctx unsafe.Pointer, status C.int, detail *C.char, list unsafe.Pointer) {
 	if int(status) != 0 {
-		resolvePendingCall(ctx, errorFromStatus(int(status)))
+		resolvePendingCall(ctx, &Error{Status: Status(status), Detail: C.GoString(detail)})
 		return
 	}
 	// Copy node data out of the C struct before resolving.
@@ -55,9 +59,9 @@ func goWispersNodeListCallback(ctx unsafe.Pointer, status C.int, list unsafe.Poi
 }
 
 //export goWispersStartServingCallback
-func goWispersStartServingCallback(ctx unsafe.Pointer, status C.int, serving unsafe.Pointer, session unsafe.Pointer, incoming unsafe.Pointer) {
+func goWispersStartServingCallback(ctx unsafe.Pointer, status C.int, detail *C.char, serving unsafe.Pointer, session unsafe.Pointer, incoming unsafe.Pointer) {
 	if int(status) != 0 {
-		resolvePendingCall(ctx, errorFromStatus(int(status)))
+		resolvePendingCall(ctx, &Error{Status: Status(status), Detail: C.GoString(detail)})
 		return
 	}
 	resolvePendingCall(ctx, startServingResult{
@@ -68,9 +72,9 @@ func goWispersStartServingCallback(ctx unsafe.Pointer, status C.int, serving uns
 }
 
 //export goWispersPairingCodeCallback
-func goWispersPairingCodeCallback(ctx unsafe.Pointer, status C.int, code *C.char) {
+func goWispersPairingCodeCallback(ctx unsafe.Pointer, status C.int, detail *C.char, code *C.char) {
 	if int(status) != 0 {
-		resolvePendingCall(ctx, errorFromStatus(int(status)))
+		resolvePendingCall(ctx, &Error{Status: Status(status), Detail: C.GoString(detail)})
 		return
 	}
 	goCode := C.GoString(code)
@@ -79,18 +83,18 @@ func goWispersPairingCodeCallback(ctx unsafe.Pointer, status C.int, code *C.char
 }
 
 //export goWispersUdpConnectionCallback
-func goWispersUdpConnectionCallback(ctx unsafe.Pointer, status C.int, conn unsafe.Pointer) {
+func goWispersUdpConnectionCallback(ctx unsafe.Pointer, status C.int, detail *C.char, conn unsafe.Pointer) {
 	if int(status) != 0 {
-		resolvePendingCall(ctx, errorFromStatus(int(status)))
+		resolvePendingCall(ctx, &Error{Status: Status(status), Detail: C.GoString(detail)})
 		return
 	}
 	resolvePendingCall(ctx, conn)
 }
 
 //export goWispersDataCallback
-func goWispersDataCallback(ctx unsafe.Pointer, status C.int, data *C.uint8_t, length C.size_t) {
+func goWispersDataCallback(ctx unsafe.Pointer, status C.int, detail *C.char, data *C.uint8_t, length C.size_t) {
 	if int(status) != 0 {
-		resolvePendingCall(ctx, errorFromStatus(int(status)))
+		resolvePendingCall(ctx, &Error{Status: Status(status), Detail: C.GoString(detail)})
 		return
 	}
 	// Copy data out of the C buffer (only valid during callback).
@@ -104,18 +108,18 @@ func goWispersDataCallback(ctx unsafe.Pointer, status C.int, data *C.uint8_t, le
 }
 
 //export goWispersQuicConnectionCallback
-func goWispersQuicConnectionCallback(ctx unsafe.Pointer, status C.int, conn unsafe.Pointer) {
+func goWispersQuicConnectionCallback(ctx unsafe.Pointer, status C.int, detail *C.char, conn unsafe.Pointer) {
 	if int(status) != 0 {
-		resolvePendingCall(ctx, errorFromStatus(int(status)))
+		resolvePendingCall(ctx, &Error{Status: Status(status), Detail: C.GoString(detail)})
 		return
 	}
 	resolvePendingCall(ctx, conn)
 }
 
 //export goWispersQuicStreamCallback
-func goWispersQuicStreamCallback(ctx unsafe.Pointer, status C.int, stream unsafe.Pointer) {
+func goWispersQuicStreamCallback(ctx unsafe.Pointer, status C.int, detail *C.char, stream unsafe.Pointer) {
 	if int(status) != 0 {
-		resolvePendingCall(ctx, errorFromStatus(int(status)))
+		resolvePendingCall(ctx, &Error{Status: Status(status), Detail: C.GoString(detail)})
 		return
 	}
 	resolvePendingCall(ctx, stream)

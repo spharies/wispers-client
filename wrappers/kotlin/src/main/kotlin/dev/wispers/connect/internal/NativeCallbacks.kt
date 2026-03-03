@@ -22,12 +22,13 @@ object NativeCallbacks {
      * ```
      * void (*WispersCallback)(
      *     void *ctx,
-     *     WispersStatus status
+     *     WispersStatus status,
+     *     const char *error_detail
      * );
      * ```
      */
     fun interface WispersCallback : Callback {
-        fun invoke(ctx: Pointer?, status: Int)
+        fun invoke(ctx: Pointer?, status: Int, errorDetail: String?)
     }
 
     /**
@@ -38,13 +39,14 @@ object NativeCallbacks {
      * void (*WispersInitCallback)(
      *     void *ctx,
      *     WispersStatus status,
+     *     const char *error_detail,
      *     WispersNodeHandle *handle,
      *     WispersNodeState state
      * );
      * ```
      */
     fun interface WispersInitCallback : Callback {
-        fun invoke(ctx: Pointer?, status: Int, handle: Pointer?, state: Int)
+        fun invoke(ctx: Pointer?, status: Int, errorDetail: String?, handle: Pointer?, state: Int)
     }
 
     /**
@@ -55,12 +57,13 @@ object NativeCallbacks {
      * void (*WispersNodeListCallback)(
      *     void *ctx,
      *     WispersStatus status,
+     *     const char *error_detail,
      *     WispersNodeList *list
      * );
      * ```
      */
     fun interface WispersNodeListCallback : Callback {
-        fun invoke(ctx: Pointer?, status: Int, list: Pointer?)
+        fun invoke(ctx: Pointer?, status: Int, errorDetail: String?, list: Pointer?)
     }
 
     /**
@@ -71,6 +74,7 @@ object NativeCallbacks {
      * void (*WispersStartServingCallback)(
      *     void *ctx,
      *     WispersStatus status,
+     *     const char *error_detail,
      *     WispersServingHandle *serving_handle,
      *     WispersServingSession *session,
      *     WispersIncomingConnections *incoming
@@ -81,6 +85,7 @@ object NativeCallbacks {
         fun invoke(
             ctx: Pointer?,
             status: Int,
+            errorDetail: String?,
             servingHandle: Pointer?,
             session: Pointer?,
             incoming: Pointer?
@@ -95,12 +100,13 @@ object NativeCallbacks {
      * void (*WispersPairingCodeCallback)(
      *     void *ctx,
      *     WispersStatus status,
+     *     const char *error_detail,
      *     char *pairing_code
      * );
      * ```
      */
     fun interface WispersPairingCodeCallback : Callback {
-        fun invoke(ctx: Pointer?, status: Int, pairingCode: Pointer?)
+        fun invoke(ctx: Pointer?, status: Int, errorDetail: String?, pairingCode: Pointer?)
     }
 
     /**
@@ -111,12 +117,13 @@ object NativeCallbacks {
      * void (*WispersUdpConnectionCallback)(
      *     void *ctx,
      *     WispersStatus status,
+     *     const char *error_detail,
      *     WispersUdpConnectionHandle *connection
      * );
      * ```
      */
     fun interface WispersUdpConnectionCallback : Callback {
-        fun invoke(ctx: Pointer?, status: Int, connection: Pointer?)
+        fun invoke(ctx: Pointer?, status: Int, errorDetail: String?, connection: Pointer?)
     }
 
     /**
@@ -127,13 +134,14 @@ object NativeCallbacks {
      * void (*WispersDataCallback)(
      *     void *ctx,
      *     WispersStatus status,
+     *     const char *error_detail,
      *     const uint8_t *data,
      *     size_t len
      * );
      * ```
      */
     fun interface WispersDataCallback : Callback {
-        fun invoke(ctx: Pointer?, status: Int, data: Pointer?, len: Long)
+        fun invoke(ctx: Pointer?, status: Int, errorDetail: String?, data: Pointer?, len: Long)
     }
 
     /**
@@ -144,12 +152,13 @@ object NativeCallbacks {
      * void (*WispersQuicConnectionCallback)(
      *     void *ctx,
      *     WispersStatus status,
+     *     const char *error_detail,
      *     WispersQuicConnectionHandle *connection
      * );
      * ```
      */
     fun interface WispersQuicConnectionCallback : Callback {
-        fun invoke(ctx: Pointer?, status: Int, connection: Pointer?)
+        fun invoke(ctx: Pointer?, status: Int, errorDetail: String?, connection: Pointer?)
     }
 
     /**
@@ -160,12 +169,13 @@ object NativeCallbacks {
      * void (*WispersQuicStreamCallback)(
      *     void *ctx,
      *     WispersStatus status,
+     *     const char *error_detail,
      *     WispersQuicStreamHandle *stream
      * );
      * ```
      */
     fun interface WispersQuicStreamCallback : Callback {
-        fun invoke(ctx: Pointer?, status: Int, stream: Pointer?)
+        fun invoke(ctx: Pointer?, status: Int, errorDetail: String?, stream: Pointer?)
     }
 
     // =========================================================================

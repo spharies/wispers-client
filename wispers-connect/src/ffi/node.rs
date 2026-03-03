@@ -13,7 +13,7 @@ use crate::errors::WispersStatus;
 use crate::node::{NodeState, NodeStorage};
 use crate::storage::foreign::WispersNodeStorageCallbacks;
 use crate::storage::{ForeignNodeStateStore, InMemoryNodeStateStore};
-use std::ffi::c_void;
+use std::ffi::{c_void, CString};
 use std::os::raw::c_char;
 
 // =============================================================================
@@ -131,15 +131,17 @@ pub extern "C" fn wispers_storage_restore_or_init_async(
                 let state = node_state_to_ffi(node.state());
                 let handle = Box::into_raw(Box::new(WispersNodeHandle(node)));
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success, handle, state);
+                    callback(ctx.ptr(), WispersStatus::Success, std::ptr::null(), handle, state);
                 }
             }
             Err(e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
                 let status: WispersStatus = e.into();
                 unsafe {
                     callback(
                         ctx.ptr(),
                         status,
+                        detail.as_ptr(),
                         std::ptr::null_mut(),
                         WispersNodeState::Pending,
                     );
@@ -209,12 +211,17 @@ pub extern "C" fn wispers_node_register_async(
         let wrapper = unsafe { handle_ptr.get_mut() };
         let result = wrapper.0.register(&token_str).await;
 
-        let status = match result {
-            Ok(()) => WispersStatus::Success,
-            Err(e) => e.into(),
-        };
-        unsafe {
-            callback(ctx.ptr(), status);
+        match result {
+            Ok(()) => unsafe {
+                callback(ctx.ptr(), WispersStatus::Success, std::ptr::null());
+            },
+            Err(e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
+                let status: WispersStatus = e.into();
+                unsafe {
+                    callback(ctx.ptr(), status, detail.as_ptr());
+                }
+            }
         }
     });
 
@@ -255,12 +262,17 @@ pub extern "C" fn wispers_node_activate_async(
         let wrapper = unsafe { handle_ptr.get_mut() };
         let result = wrapper.0.activate(&pairing_code_str).await;
 
-        let status = match result {
-            Ok(()) => WispersStatus::Success,
-            Err(e) => e.into(),
-        };
-        unsafe {
-            callback(ctx.ptr(), status);
+        match result {
+            Ok(()) => unsafe {
+                callback(ctx.ptr(), WispersStatus::Success, std::ptr::null());
+            },
+            Err(e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
+                let status: WispersStatus = e.into();
+                unsafe {
+                    callback(ctx.ptr(), status, detail.as_ptr());
+                }
+            }
         }
     });
 
@@ -292,12 +304,17 @@ pub extern "C" fn wispers_node_logout_async(
     runtime::spawn(async move {
         let result = wrapper.0.logout().await;
 
-        let status = match result {
-            Ok(()) => WispersStatus::Success,
-            Err(e) => e.into(),
-        };
-        unsafe {
-            callback(ctx.ptr(), status);
+        match result {
+            Ok(()) => unsafe {
+                callback(ctx.ptr(), WispersStatus::Success, std::ptr::null());
+            },
+            Err(e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
+                let status: WispersStatus = e.into();
+                unsafe {
+                    callback(ctx.ptr(), status, detail.as_ptr());
+                }
+            }
         }
     });
 
@@ -329,7 +346,7 @@ pub extern "C" fn wispers_node_list_nodes_async(
     runtime::spawn(async move {
         // Safety: caller must ensure handle is valid and not used concurrently
         let wrapper = unsafe { handle_ptr.get() };
-        let result = wrapper.0.list_nodes().await.map_err(|e| e.into());
+        let result = wrapper.0.list_nodes().await;
         handle_list_nodes_result(result, ctx, callback);
     });
 
@@ -375,27 +392,31 @@ impl SendableNodePtr {
 }
 
 fn handle_list_nodes_result(
-    result: Result<Vec<crate::types::NodeInfo>, WispersStatus>,
+    result: Result<Vec<crate::types::NodeInfo>, crate::errors::NodeStateError>,
     ctx: CallbackContext,
-    callback: unsafe extern "C" fn(*mut c_void, WispersStatus, *mut WispersNodeList),
+    callback: unsafe extern "C" fn(*mut c_void, WispersStatus, *const c_char, *mut WispersNodeList),
 ) {
     match result {
         Ok(nodes) => match WispersNodeList::from_node_infos(nodes) {
             Ok(list) => {
                 let list_ptr = Box::into_raw(Box::new(list));
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success, list_ptr);
+                    callback(ctx.ptr(), WispersStatus::Success, std::ptr::null(), list_ptr);
                 }
             }
             Err(status) => {
+                let detail = CString::new(format!("failed to build node list: {status:?}"))
+                    .unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), status, std::ptr::null_mut());
+                    callback(ctx.ptr(), status, detail.as_ptr(), std::ptr::null_mut());
                 }
             }
         },
-        Err(status) => {
+        Err(e) => {
+            let detail = CString::new(e.to_string()).unwrap_or_default();
+            let status: WispersStatus = e.into();
             unsafe {
-                callback(ctx.ptr(), status, std::ptr::null_mut());
+                callback(ctx.ptr(), status, detail.as_ptr(), std::ptr::null_mut());
             }
         }
     }

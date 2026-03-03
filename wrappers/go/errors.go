@@ -27,50 +27,56 @@ const (
 	StatusPeerUnavailable    Status = 18
 )
 
-// Error wraps a non-success WispersStatus code.
+// Error wraps a non-success WispersStatus code with optional detail.
 type Error struct {
 	Status Status
+	Detail string // human-readable detail from the Rust library (may be empty)
 }
 
 func (e *Error) Error() string {
+	var base string
 	switch e.Status {
 	case StatusNullPointer:
-		return "wispers: null pointer"
+		base = "wispers: null pointer"
 	case StatusInvalidUTF8:
-		return "wispers: invalid UTF-8"
+		base = "wispers: invalid UTF-8"
 	case StatusStoreError:
-		return "wispers: store error"
+		base = "wispers: store error"
 	case StatusAlreadyRegistered:
-		return "wispers: already registered"
+		base = "wispers: already registered"
 	case StatusNotRegistered:
-		return "wispers: not registered"
+		base = "wispers: not registered"
 	case StatusNotFound:
-		return "wispers: not found"
+		base = "wispers: not found"
 	case StatusBufferTooSmall:
-		return "wispers: buffer too small"
+		base = "wispers: buffer too small"
 	case StatusMissingCallback:
-		return "wispers: missing callback"
+		base = "wispers: missing callback"
 	case StatusInvalidPairingCode:
-		return "wispers: invalid pairing code"
+		base = "wispers: invalid pairing code"
 	case StatusActivationFailed:
-		return "wispers: activation failed"
+		base = "wispers: activation failed"
 	case StatusHubError:
-		return "wispers: hub error"
+		base = "wispers: hub error"
 	case StatusConnectionFailed:
-		return "wispers: connection failed"
+		base = "wispers: connection failed"
 	case StatusTimeout:
-		return "wispers: timeout"
+		base = "wispers: timeout"
 	case StatusInvalidState:
-		return "wispers: invalid state"
+		base = "wispers: invalid state"
 	case StatusUnauthenticated:
-		return "wispers: unauthenticated (node removed)"
+		base = "wispers: unauthenticated (node removed)"
 	case StatusPeerRejected:
-		return "wispers: peer rejected request"
+		base = "wispers: peer rejected request"
 	case StatusPeerUnavailable:
-		return "wispers: peer unavailable"
+		base = "wispers: peer unavailable"
 	default:
-		return fmt.Sprintf("wispers: unknown status %d", e.Status)
+		base = fmt.Sprintf("wispers: unknown status %d", e.Status)
 	}
+	if e.Detail != "" {
+		return base + ": " + e.Detail
+	}
+	return base
 }
 
 // Sentinel errors for use with errors.Is().

@@ -11,6 +11,7 @@ use crate::node::{Node, NodeState};
 use crate::serving::{IncomingConnections, ServingHandle, ServingSession};
 use std::ffi::{c_void, CString};
 use std::os::raw::c_char;
+use std::ptr;
 
 /// Opaque handle to a serving command interface.
 ///
@@ -36,6 +37,7 @@ pub type WispersStartServingCallback = Option<
     unsafe extern "C" fn(
         ctx: *mut c_void,
         status: WispersStatus,
+        error_detail: *const c_char,
         serving_handle: *mut WispersServingHandle,
         session: *mut WispersServingSession,
         incoming: *mut WispersIncomingConnections,
@@ -44,7 +46,12 @@ pub type WispersStartServingCallback = Option<
 
 /// Callback that receives a pairing code string.
 pub type WispersPairingCodeCallback = Option<
-    unsafe extern "C" fn(ctx: *mut c_void, status: WispersStatus, pairing_code: *mut c_char),
+    unsafe extern "C" fn(
+        ctx: *mut c_void,
+        status: WispersStatus,
+        error_detail: *const c_char,
+        pairing_code: *mut c_char,
+    ),
 >;
 
 // Free functions
@@ -126,18 +133,19 @@ pub extern "C" fn wispers_incoming_accept_udp_async(
             Some(Ok(conn)) => {
                 let h = Box::into_raw(Box::new(WispersUdpConnectionHandle(conn)));
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success, h);
+                    callback(ctx.ptr(), WispersStatus::Success, ptr::null(), h);
                 }
             }
-            Some(Err(_)) => {
+            Some(Err(e)) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, std::ptr::null_mut());
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, detail.as_ptr(), ptr::null_mut());
                 }
             }
             None => {
-                // Channel closed (session ended)
+                let detail = CString::new("channel closed (session ended)").unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, std::ptr::null_mut());
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, detail.as_ptr(), ptr::null_mut());
                 }
             }
         }
@@ -178,18 +186,19 @@ pub extern "C" fn wispers_incoming_accept_quic_async(
             Some(Ok(conn)) => {
                 let h = Box::into_raw(Box::new(WispersQuicConnectionHandle(conn)));
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success, h);
+                    callback(ctx.ptr(), WispersStatus::Success, ptr::null(), h);
                 }
             }
-            Some(Err(_)) => {
+            Some(Err(e)) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, std::ptr::null_mut());
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, detail.as_ptr(), ptr::null_mut());
                 }
             }
             None => {
-                // Channel closed (session ended)
+                let detail = CString::new("channel closed (session ended)").unwrap_or_default();
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, std::ptr::null_mut());
+                    callback(ctx.ptr(), WispersStatus::ConnectionFailed, detail.as_ptr(), ptr::null_mut());
                 }
             }
         }
@@ -241,10 +250,11 @@ pub extern "C" fn wispers_node_start_serving_async(
                 let s = Box::into_raw(Box::new(WispersServingSession(Some(session))));
                 let i = Box::into_raw(Box::new(WispersIncomingConnections(incoming)));
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::Success, h, s, i);
+                    callback(ctx.ptr(), WispersStatus::Success, ptr::null(), h, s, i);
                 }
             }
             Err(e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
                 let status = if e.is_unauthenticated() {
                     WispersStatus::Unauthenticated
                 } else if e.is_peer_rejected() {
@@ -260,9 +270,10 @@ pub extern "C" fn wispers_node_start_serving_async(
                     callback(
                         ctx.ptr(),
                         status,
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
+                        detail.as_ptr(),
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                        ptr::null_mut(),
                     );
                 }
             }
@@ -303,24 +314,26 @@ pub extern "C" fn wispers_serving_handle_generate_pairing_code_async(
                 match CString::new(code_str) {
                     Ok(cstr) => {
                         unsafe {
-                            callback(ctx.ptr(), WispersStatus::Success, cstr.into_raw());
+                            callback(ctx.ptr(), WispersStatus::Success, ptr::null(), cstr.into_raw());
                         }
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        let detail = CString::new(e.to_string()).unwrap_or_default();
                         unsafe {
-                            callback(ctx.ptr(), WispersStatus::InvalidUtf8, std::ptr::null_mut());
+                            callback(ctx.ptr(), WispersStatus::InvalidUtf8, detail.as_ptr(), ptr::null_mut());
                         }
                     }
                 }
             }
-            Err(ref e) if e.is_unauthenticated() => {
+            Err(e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
+                let status = if e.is_unauthenticated() {
+                    WispersStatus::Unauthenticated
+                } else {
+                    WispersStatus::HubError
+                };
                 unsafe {
-                    callback(ctx.ptr(), WispersStatus::Unauthenticated, std::ptr::null_mut());
-                }
-            }
-            Err(_) => {
-                unsafe {
-                    callback(ctx.ptr(), WispersStatus::HubError, std::ptr::null_mut());
+                    callback(ctx.ptr(), status, detail.as_ptr(), ptr::null_mut());
                 }
             }
         }
@@ -361,15 +374,25 @@ pub extern "C" fn wispers_serving_session_run_async(
 
     runtime::spawn(async move {
         let result = session.run().await;
-        let status = match &result {
-            Ok(()) => WispersStatus::Success,
-            Err(e) if e.is_unauthenticated() => WispersStatus::Unauthenticated,
-            Err(e) if e.is_peer_rejected() => WispersStatus::PeerRejected,
-            Err(e) if e.is_peer_unavailable() => WispersStatus::PeerUnavailable,
-            Err(_) => WispersStatus::HubError,
-        };
-        unsafe {
-            callback(ctx.ptr(), status);
+        match result {
+            Ok(()) => unsafe {
+                callback(ctx.ptr(), WispersStatus::Success, ptr::null());
+            },
+            Err(e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
+                let status = if e.is_unauthenticated() {
+                    WispersStatus::Unauthenticated
+                } else if e.is_peer_rejected() {
+                    WispersStatus::PeerRejected
+                } else if e.is_peer_unavailable() {
+                    WispersStatus::PeerUnavailable
+                } else {
+                    WispersStatus::HubError
+                };
+                unsafe {
+                    callback(ctx.ptr(), status, detail.as_ptr());
+                }
+            }
         }
     });
 
@@ -400,12 +423,16 @@ pub extern "C" fn wispers_serving_handle_shutdown_async(
 
     runtime::spawn(async move {
         let result = serving_handle.shutdown().await;
-        let status = match result {
-            Ok(()) => WispersStatus::Success,
-            Err(_) => WispersStatus::HubError,
-        };
-        unsafe {
-            callback(ctx.ptr(), status);
+        match result {
+            Ok(()) => unsafe {
+                callback(ctx.ptr(), WispersStatus::Success, ptr::null());
+            },
+            Err(e) => {
+                let detail = CString::new(e.to_string()).unwrap_or_default();
+                unsafe {
+                    callback(ctx.ptr(), WispersStatus::HubError, detail.as_ptr());
+                }
+            }
         }
     });
 
