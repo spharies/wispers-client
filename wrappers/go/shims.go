@@ -48,6 +48,7 @@ func goWispersGroupInfoCallback(ctx unsafe.Pointer, status C.int, detail *C.char
 			nodes[i] = NodeInfo{
 				NodeNumber:       int32(cNodes[i].node_number),
 				Name:             C.GoString(cNodes[i].name),
+				Metadata:         C.GoString(cNodes[i].metadata),
 				IsSelf:           bool(cNodes[i].is_self),
 				ActivationStatus: ActivationStatus(cNodes[i].activation_status),
 				LastSeenAtMillis: int64(cNodes[i].last_seen_at_millis),

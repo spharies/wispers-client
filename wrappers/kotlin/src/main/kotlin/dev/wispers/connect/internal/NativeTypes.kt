@@ -27,10 +27,11 @@ object NativeTypes {
      * Node info returned in node list.
      * Name string is owned and freed by wispers_node_list_free().
      */
-    @Structure.FieldOrder("nodeNumber", "name", "isSelf", "activationStatus", "lastSeenAtMillis", "isOnline")
+    @Structure.FieldOrder("nodeNumber", "name", "metadata", "isSelf", "activationStatus", "lastSeenAtMillis", "isOnline")
     open class WispersNode : Structure {
         @JvmField var nodeNumber: Int = 0
         @JvmField var name: Pointer? = null
+        @JvmField var metadata: Pointer? = null
         @JvmField var isSelf: Byte = 0      // C bool is 1 byte; JNA Boolean maps to int (4 bytes)
         @JvmField var activationStatus: Int = 0
         @JvmField var lastSeenAtMillis: Long = 0

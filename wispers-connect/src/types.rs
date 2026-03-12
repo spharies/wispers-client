@@ -122,6 +122,8 @@ pub struct NodeInfo {
     pub node_number: i32,
     /// The node's display name (may be empty).
     pub name: String,
+    /// Opaque metadata string (e.g. JSON like `{"platform":"android"}`).
+    pub metadata: String,
     /// Whether this is the current node (self).
     pub is_self: bool,
     /// Whether the node is activated (in the roster and not revoked).

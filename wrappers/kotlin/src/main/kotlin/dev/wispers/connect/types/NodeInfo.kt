@@ -34,6 +34,9 @@ data class NodeInfo(
     /** Human-readable name of the node. */
     val name: String,
 
+    /** Opaque metadata string (e.g. JSON like `{"platform":"android"}`). */
+    val metadata: String,
+
     /** Whether this node is the current node (self). */
     val isSelf: Boolean,
 

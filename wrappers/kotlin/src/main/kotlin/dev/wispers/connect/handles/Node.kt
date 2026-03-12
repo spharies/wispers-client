@@ -140,6 +140,7 @@ class Node internal constructor(
                 NodeInfo(
                     nodeNumber = node.nodeNumber,
                     name = node.name?.getString(0, "UTF-8") ?: "",
+                    metadata = node.metadata?.getString(0, "UTF-8") ?: "",
                     isSelf = node.isSelf != 0.toByte(),
                     activationStatus = ActivationStatus.fromCode(node.activationStatus),
                     lastSeenAtMillis = if (node.lastSeenAtMillis > 0) node.lastSeenAtMillis else null,

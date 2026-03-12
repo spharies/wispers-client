@@ -99,6 +99,7 @@ typedef void (*WispersInitCallback)(
 typedef struct {
     int32_t node_number;
     char *name;                          // Owned, freed by wispers_group_status_free()
+    char *metadata;                      // Owned, freed alongside name
     bool is_self;                        // Whether this is the current node
     int32_t activation_status;           // WispersActivationStatus value
     int64_t last_seen_at_millis;

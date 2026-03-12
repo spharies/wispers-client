@@ -70,6 +70,7 @@ func (s GroupState) String() string {
 type NodeInfo struct {
 	NodeNumber       int32
 	Name             string
+	Metadata         string
 	IsSelf           bool
 	ActivationStatus ActivationStatus
 	LastSeenAtMillis int64

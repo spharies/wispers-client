@@ -61,6 +61,7 @@ impl HubError {
 pub struct Node {
     pub node_number: i32,
     pub name: String,
+    pub metadata: String,
     pub last_seen_at_millis: i64,
     pub is_online: bool,
 }
@@ -125,6 +126,7 @@ impl HubClient {
             .map(|n| Node {
                 node_number: n.node_number,
                 name: n.name,
+                metadata: n.metadata,
                 last_seen_at_millis: n.last_seen_at_millis,
                 is_online: n.is_online,
             })

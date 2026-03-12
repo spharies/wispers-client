@@ -157,6 +157,7 @@ pub extern "C" fn wispers_registration_info_free(info: *mut WispersRegistrationI
 pub struct WispersNode {
     pub node_number: c_int,
     pub name: *mut c_char,
+    pub metadata: *mut c_char,
     /// Whether this is the current node (self).
     pub is_self: bool,
     /// Activation status: 0 = unknown, 1 = not activated, 2 = activated.
@@ -191,6 +192,9 @@ pub extern "C" fn wispers_node_list_free(list: *mut WispersNodeList) {
             for node in nodes {
                 if !node.name.is_null() {
                     drop(CString::from_raw(node.name));
+                }
+                if !node.metadata.is_null() {
+                    drop(CString::from_raw(node.metadata));
                 }
             }
         }
@@ -251,6 +255,7 @@ impl WispersGroupInfo {
         let mut c_nodes: Vec<WispersNode> = Vec::with_capacity(count);
         for node in info.nodes {
             let name = CString::new(node.name).map_err(|_| WispersStatus::InvalidUtf8)?;
+            let metadata = CString::new(node.metadata).map_err(|_| WispersStatus::InvalidUtf8)?;
             let activation_status = match node.is_activated {
                 None => WISPERS_ACTIVATION_UNKNOWN,
                 Some(false) => WISPERS_ACTIVATION_NOT_ACTIVATED,
@@ -259,6 +264,7 @@ impl WispersGroupInfo {
             c_nodes.push(WispersNode {
                 node_number: node.node_number,
                 name: name.into_raw(),
+                metadata: metadata.into_raw(),
                 is_self: node.is_self,
                 activation_status,
                 last_seen_at_millis: node.last_seen_at_millis,
@@ -299,6 +305,9 @@ pub extern "C" fn wispers_group_info_free(group_info: *mut WispersGroupInfo) {
             for node in nodes {
                 if !node.name.is_null() {
                     drop(CString::from_raw(node.name));
+                }
+                if !node.metadata.is_null() {
+                    drop(CString::from_raw(node.metadata));
                 }
             }
         }

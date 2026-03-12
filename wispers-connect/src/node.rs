@@ -493,6 +493,7 @@ impl Node {
                 NodeInfo {
                     node_number: hub_node.node_number,
                     name: hub_node.name,
+                    metadata: hub_node.metadata,
                     is_self: hub_node.node_number == my_node_number,
                     is_activated,
                     last_seen_at_millis: hub_node.last_seen_at_millis,
