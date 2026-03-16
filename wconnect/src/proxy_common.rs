@@ -57,15 +57,6 @@ impl ProxyError {
         }
     }
 
-    /// Get the SOCKS5 reply code for this error.
-    pub fn socks5_reply(&self) -> u8 {
-        match self {
-            ProxyError::BadRequest(_) => 0x01,    // general SOCKS server failure
-            ProxyError::Forbidden(_) => 0x02,     // connection not allowed by ruleset
-            ProxyError::BadGateway(_) => 0x05,    // connection refused
-            ProxyError::GatewayTimeout(_) => 0x06, // TTL expired
-        }
-    }
 }
 
 /// A pooled QUIC connection with last-used timestamp.
@@ -275,11 +266,4 @@ mod tests {
         assert_eq!(ProxyError::GatewayTimeout("".to_string()).status_code(), 504);
     }
 
-    #[test]
-    fn test_proxy_error_socks5_replies() {
-        assert_eq!(ProxyError::BadRequest("".to_string()).socks5_reply(), 0x01);
-        assert_eq!(ProxyError::Forbidden("".to_string()).socks5_reply(), 0x02);
-        assert_eq!(ProxyError::BadGateway("".to_string()).socks5_reply(), 0x05);
-        assert_eq!(ProxyError::GatewayTimeout("".to_string()).socks5_reply(), 0x06);
-    }
 }
