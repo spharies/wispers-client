@@ -473,8 +473,8 @@ static int test_node_activate_null_handle(void) {
     return 0;
 }
 
-static int test_node_activate_null_pairing_code(void) {
-    TEST("node_activate rejects NULL pairing_code");
+static int test_node_activate_null_activation_code(void) {
+    TEST("node_activate rejects NULL activation_code");
 
     WispersNodeStorageHandle *storage = wispers_storage_new_in_memory();
     if (!storage) FAIL("failed to create storage");
@@ -662,10 +662,10 @@ static int test_node_start_serving_null_handle(void) {
     return 0;
 }
 
-static int test_generate_pairing_code_null_handle(void) {
-    TEST("generate_pairing_code rejects NULL handle");
+static int test_generate_activation_code_null_handle(void) {
+    TEST("generate_activation_code rejects NULL handle");
 
-    WispersStatus status = wispers_serving_handle_generate_pairing_code_async(NULL, NULL, NULL);
+    WispersStatus status = wispers_serving_handle_generate_activation_code_async(NULL, NULL, NULL);
     if (status != WISPERS_STATUS_NULL_POINTER) FAIL("expected NULL_POINTER");
 
     PASS();
@@ -1018,7 +1018,7 @@ int main(void) {
     // Phase 5 tests
     printf("\n-- Phase 5: Activation --\n");
     failures += test_node_activate_null_handle();
-    failures += test_node_activate_null_pairing_code();
+    failures += test_node_activate_null_activation_code();
     failures += test_node_activate_null_callback();
 
     // Phase 6 tests
@@ -1034,7 +1034,7 @@ int main(void) {
     failures += test_serving_session_free_null();
     failures += test_incoming_connections_free_null();
     failures += test_node_start_serving_null_handle();
-    failures += test_generate_pairing_code_null_handle();
+    failures += test_generate_activation_code_null_handle();
     failures += test_session_run_null_handle();
     failures += test_shutdown_null_handle();
 

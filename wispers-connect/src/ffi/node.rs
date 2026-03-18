@@ -228,15 +228,15 @@ pub extern "C" fn wispers_node_register_async(
     WispersStatus::Success
 }
 
-/// Activate the node by pairing with an endorser.
+/// Activate the node using an activation code from an endorser.
 ///
-/// The pairing code format is "node_number-secret" (e.g., "1-abc123xyz0").
+/// The activation code format is "node_number-secret" (e.g., "1-abc123xyz0").
 /// Returns INVALID_STATE if the node is not in Registered state.
 /// The node handle is NOT consumed - it transitions to Activated state on success.
 #[unsafe(no_mangle)]
 pub extern "C" fn wispers_node_activate_async(
     handle: *mut WispersNodeHandle,
-    pairing_code: *const c_char,
+    activation_code: *const c_char,
     ctx: *mut c_void,
     callback: WispersCallback,
 ) -> WispersStatus {
@@ -244,7 +244,7 @@ pub extern "C" fn wispers_node_activate_async(
         return WispersStatus::NullPointer;
     }
 
-    let pairing_code_str = match c_str_to_string(pairing_code) {
+    let activation_code_str = match c_str_to_string(activation_code) {
         Ok(s) => s,
         Err(status) => return status,
     };
@@ -260,7 +260,7 @@ pub extern "C" fn wispers_node_activate_async(
     runtime::spawn(async move {
         // Safety: caller must ensure handle is valid and not used concurrently
         let wrapper = unsafe { handle_ptr.get_mut() };
-        let result = wrapper.0.activate(&pairing_code_str).await;
+        let result = wrapper.0.activate(&activation_code_str).await;
 
         match result {
             Ok(()) => unsafe {

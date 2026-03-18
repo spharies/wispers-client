@@ -59,7 +59,7 @@ class Node internal constructor(
     }
 
     /**
-     * Activate the node by pairing with an endorser.
+     * Activate the node using an activation code from an endorser.
      *
      * The activation code format is "node_number-secret" (e.g., "1-abc123xyz0").
      * Get this from an already-activated node via [ServingSession.generateActivationCode].
@@ -69,7 +69,7 @@ class Node internal constructor(
      * @param activationCode Activation code from an endorser node
      * @throws WispersException.InvalidState if not in Registered state
      * @throws WispersException.InvalidActivationCode if the code format is invalid
-     * @throws WispersException.ActivationFailed if pairing verification fails
+     * @throws WispersException.ActivationFailed if activation verification fails
      */
     suspend fun activate(activationCode: String): Unit = suspendCancellableCoroutine { cont ->
         val ptr = requireOpen()

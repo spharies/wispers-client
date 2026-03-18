@@ -15,7 +15,7 @@ use std::ptr;
 
 /// Opaque handle to a serving command interface.
 ///
-/// Use this to generate pairing codes and control the session.
+/// Use this to generate activation codes and control the session.
 /// This handle can be cloned internally and remains valid until freed.
 pub struct WispersServingHandle(pub(crate) ServingHandle);
 
@@ -44,13 +44,13 @@ pub type WispersStartServingCallback = Option<
     ),
 >;
 
-/// Callback that receives a pairing code string.
-pub type WispersPairingCodeCallback = Option<
+/// Callback that receives an activation code string.
+pub type WispersActivationCodeCallback = Option<
     unsafe extern "C" fn(
         ctx: *mut c_void,
         status: WispersStatus,
         error_detail: *const c_char,
-        pairing_code: *mut c_char,
+        activation_code: *mut c_char,
     ),
 >;
 
@@ -283,15 +283,15 @@ pub extern "C" fn wispers_node_start_serving_async(
     WispersStatus::Success
 }
 
-/// Generate a pairing code for endorsing a new node.
+/// Generate an activation code for endorsing a new node.
 ///
 /// The serving handle is NOT consumed.
-/// On success, the callback receives the pairing code string (caller must free with wispers_string_free).
+/// On success, the callback receives the activation code string (caller must free with wispers_string_free).
 #[unsafe(no_mangle)]
-pub extern "C" fn wispers_serving_handle_generate_pairing_code_async(
+pub extern "C" fn wispers_serving_handle_generate_activation_code_async(
     handle: *mut WispersServingHandle,
     ctx: *mut c_void,
-    callback: WispersPairingCodeCallback,
+    callback: WispersActivationCodeCallback,
 ) -> WispersStatus {
     if handle.is_null() {
         return WispersStatus::NullPointer;
@@ -307,7 +307,7 @@ pub extern "C" fn wispers_serving_handle_generate_pairing_code_async(
     let ctx = CallbackContext(ctx);
 
     runtime::spawn(async move {
-        let result = serving_handle.generate_pairing_secret().await;
+        let result = serving_handle.generate_activation_code().await;
         match result {
             Ok(pairing_code) => {
                 let code_str = pairing_code.format();

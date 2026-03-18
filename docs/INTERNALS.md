@@ -128,11 +128,11 @@ The library's serving API is split into two parts:
   and `RosterCosignRequest` (endorsement).
 - **`ServingHandle`** — a `Clone`-able handle that communicates with
   the session via channels. Exposes `status()`,
-  `generate_pairing_secret()`, and `shutdown()`.
+  `generate_activation_code()`, and `shutdown()`.
 
 ```mermaid
 flowchart BT
-    Handle["<b>ServingHandle</b> (Clone-able)<br/>status() → StatusInfo<br/>generate_pairing_secret()<br/>shutdown()"]
+    Handle["<b>ServingHandle</b> (Clone-able)<br/>status() → StatusInfo<br/>generate_activation_code()<br/>shutdown()"]
     Session["<b>ServingSession</b> (runner task)<br/>Hub gRPC stream<br/>Endorsing state<br/>Handles PairNodesMessage<br/>Handles RosterCosignRequest"]
 
     Handle -- "channel" --> Session

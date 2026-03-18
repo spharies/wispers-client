@@ -4,7 +4,7 @@
  * Demonstrates using the wispers-connect C API (unified node handle) to:
  * - Initialize/restore node state
  * - Register with hub (if needed)
- * - Activate with a pairing code (if needed)
+ * - Activate with an activation code (if needed)
  * - Serve (for endorsing other nodes)
  * - Ping another node
  *
@@ -13,8 +13,8 @@
  * Usage:
  *   ./ffi_demo [--hub <addr>] status              - Show current node state
  *   ./ffi_demo [--hub <addr>] register <token>    - Register with the given token
- *   ./ffi_demo [--hub <addr>] activate <code>     - Activate with pairing code
- *   ./ffi_demo [--hub <addr>] serve [--pairing-code] - Serve and optionally print pairing code
+ *   ./ffi_demo [--hub <addr>] activate <code>     - Activate with activation code
+ *   ./ffi_demo [--hub <addr>] serve [--activation-code] - Serve and optionally print activation code
  *   ./ffi_demo [--hub <addr>] ping <node_number>  - Ping another node
  */
 
@@ -126,8 +126,8 @@ typedef struct {
 typedef struct {
     SyncState sync;
     WispersStatus status;
-    char *pairing_code;
-} PairingCodeCtx;
+    char *activation_code;
+} ActivationCodeCtx;
 
 typedef struct {
     SyncState sync;
@@ -185,14 +185,14 @@ static void serving_callback(
     sync_signal(&c->sync);
 }
 
-static void pairing_code_callback(
+static void activation_code_callback(
     void *ctx,
     WispersStatus status,
-    char *pairing_code
+    char *activation_code
 ) {
-    PairingCodeCtx *c = (PairingCodeCtx *)ctx;
+    ActivationCodeCtx *c = (ActivationCodeCtx *)ctx;
     c->status = status;
-    c->pairing_code = pairing_code;
+    c->activation_code = activation_code;
     sync_signal(&c->sync);
 }
 
@@ -454,8 +454,8 @@ static void print_usage(const char *program) {
     fprintf(stderr, "Usage:\n");
     fprintf(stderr, "  %s [--hub <addr>] status              - Show current node state\n", program);
     fprintf(stderr, "  %s [--hub <addr>] register <token>    - Register with the given token\n", program);
-    fprintf(stderr, "  %s [--hub <addr>] activate <code>     - Activate with pairing code\n", program);
-    fprintf(stderr, "  %s [--hub <addr>] serve [--pairing-code] - Serve and optionally print pairing code\n", program);
+    fprintf(stderr, "  %s [--hub <addr>] activate <code>     - Activate with activation code\n", program);
+    fprintf(stderr, "  %s [--hub <addr>] serve [--activation-code] - Serve and optionally print activation code\n", program);
     fprintf(stderr, "  %s [--hub <addr>] ping <node_number>  - Ping another node\n", program);
 }
 
@@ -606,7 +606,7 @@ static int cmd_register(const char *token) {
     return 0;
 }
 
-static int cmd_activate(const char *pairing_code) {
+static int cmd_activate(const char *activation_code) {
     StorageCtx *storage_ctx = NULL;
     WispersNodeStorageHandle *storage = create_storage(&storage_ctx);
     if (!storage) {
@@ -653,11 +653,11 @@ static int cmd_activate(const char *pairing_code) {
         return 1;
     }
 
-    // Activate with the pairing code
-    printf("Activating with pairing code...\n");
+    // Activate with the activation code
+    printf("Activating with activation code...\n");
     BasicCtx act_ctx = {0};
     sync_init(&act_ctx.sync);
-    status = wispers_node_activate_async(init_ctx.handle, pairing_code, &act_ctx, basic_callback);
+    status = wispers_node_activate_async(init_ctx.handle, activation_code, &act_ctx, basic_callback);
     if (status != WISPERS_STATUS_SUCCESS) {
         fprintf(stderr, "Failed to start activation: %s\n", status_str(status));
         wispers_node_free(init_ctx.handle);
@@ -791,7 +791,7 @@ static void handle_quic_connection(WispersQuicConnectionHandle *conn) {
     wispers_quic_stream_free(stream_ctx.stream);
 }
 
-static int cmd_serve(int print_pairing_code) {
+static int cmd_serve(int print_activation_code) {
     StorageCtx *storage_ctx = NULL;
     WispersNodeStorageHandle *storage = create_storage(&storage_ctx);
     if (!storage) {
@@ -873,24 +873,24 @@ static int cmd_serve(int print_pairing_code) {
 
     printf("Serving session started\n");
 
-    // Generate and print pairing code if requested
-    if (print_pairing_code) {
-        PairingCodeCtx pc_ctx = {0};
-        sync_init(&pc_ctx.sync);
-        status = wispers_serving_handle_generate_pairing_code_async(serv_ctx.serving, &pc_ctx, pairing_code_callback);
+    // Generate and print activation code if requested
+    if (print_activation_code) {
+        ActivationCodeCtx ac_ctx = {0};
+        sync_init(&ac_ctx.sync);
+        status = wispers_serving_handle_generate_activation_code_async(serv_ctx.serving, &ac_ctx, activation_code_callback);
         if (status == WISPERS_STATUS_SUCCESS) {
-            if (sync_wait(&pc_ctx.sync, 10000) && pc_ctx.status == WISPERS_STATUS_SUCCESS && pc_ctx.pairing_code) {
-                printf("Pairing code: %s\n", pc_ctx.pairing_code);
-                wispers_string_free(pc_ctx.pairing_code);
-            } else if (sync_is_called(&pc_ctx.sync)) {
-                fprintf(stderr, "Failed to generate pairing code: %s\n", status_str(pc_ctx.status));
+            if (sync_wait(&ac_ctx.sync, 10000) && ac_ctx.status == WISPERS_STATUS_SUCCESS && ac_ctx.activation_code) {
+                printf("Activation code: %s\n", ac_ctx.activation_code);
+                wispers_string_free(ac_ctx.activation_code);
+            } else if (sync_is_called(&ac_ctx.sync)) {
+                fprintf(stderr, "Failed to generate activation code: %s\n", status_str(ac_ctx.status));
             } else {
-                fprintf(stderr, "Timeout generating pairing code\n");
+                fprintf(stderr, "Timeout generating activation code\n");
             }
         } else {
-            fprintf(stderr, "Failed to start pairing code generation: %s\n", status_str(status));
+            fprintf(stderr, "Failed to start activation code generation: %s\n", status_str(status));
         }
-        sync_destroy(&pc_ctx.sync);
+        sync_destroy(&ac_ctx.sync);
     }
 
     printf("Serving... (press Ctrl-C to stop)\n");
@@ -1181,17 +1181,17 @@ int main(int argc, char **argv) {
         return cmd_register(argv[arg_idx]);
     } else if (strcmp(command, "activate") == 0) {
         if (arg_idx >= argc) {
-            fprintf(stderr, "Error: activate requires a pairing code\n");
+            fprintf(stderr, "Error: activate requires an activation code\n");
             print_usage(argv[0]);
             return 1;
         }
         return cmd_activate(argv[arg_idx]);
     } else if (strcmp(command, "serve") == 0) {
-        int print_pairing_code = 0;
-        if (arg_idx < argc && strcmp(argv[arg_idx], "--pairing-code") == 0) {
-            print_pairing_code = 1;
+        int print_activation_code = 0;
+        if (arg_idx < argc && strcmp(argv[arg_idx], "--activation-code") == 0) {
+            print_activation_code = 1;
         }
-        return cmd_serve(print_pairing_code);
+        return cmd_serve(print_activation_code);
     } else if (strcmp(command, "ping") == 0) {
         if (arg_idx >= argc) {
             fprintf(stderr, "Error: ping requires a node number\n");

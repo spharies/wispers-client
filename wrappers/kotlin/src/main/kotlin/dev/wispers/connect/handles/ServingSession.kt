@@ -102,7 +102,7 @@ class ServingSession internal constructor(
             requireOpen()
             val ctx = CallbackBridge.register(cont)
 
-            val status = lib.wispers_serving_handle_generate_pairing_code_async(
+            val status = lib.wispers_serving_handle_generate_activation_code_async(
                 servingHandle, ctx, Callbacks.activationCode
             )
             if (status != WispersStatus.SUCCESS.code) {

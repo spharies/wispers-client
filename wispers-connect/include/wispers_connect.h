@@ -20,7 +20,7 @@ typedef enum {
     WISPERS_STATUS_NOT_FOUND = 6,
     WISPERS_STATUS_BUFFER_TOO_SMALL = 7,
     WISPERS_STATUS_MISSING_CALLBACK = 8,
-    WISPERS_STATUS_INVALID_PAIRING_CODE = 9,
+    WISPERS_STATUS_INVALID_ACTIVATION_CODE = 9,
     WISPERS_STATUS_ACTIVATION_FAILED = 10,
     WISPERS_STATUS_HUB_ERROR = 11,
     WISPERS_STATUS_CONNECTION_FAILED = 12,
@@ -158,13 +158,13 @@ typedef void (*WispersStartServingCallback)(
     WispersIncomingConnections *incoming
 );
 
-// Callback that receives a pairing code string.
-// The pairing code must be freed with wispers_string_free().
-typedef void (*WispersPairingCodeCallback)(
+// Callback that receives an activation code string.
+// The activation code must be freed with wispers_string_free().
+typedef void (*WispersActivationCodeCallback)(
     void *ctx,
     WispersStatus status,
     const char *error_detail,
-    char *pairing_code
+    char *activation_code
 );
 
 // Callback that receives a UDP connection handle.
@@ -269,14 +269,14 @@ WispersStatus wispers_node_register_async(
     WispersCallback callback
 );
 
-// Activate the node by pairing with an endorser.
-// The pairing code format is "node_number-secret" (e.g., "1-abc123xyz0").
+// Activate the node using an activation code from an endorser.
+// The activation code format is "node_number-secret" (e.g., "1-abc123xyz0").
 // Requires: Registered state. Returns INVALID_STATE if not Registered.
 // The node handle is NOT consumed - it transitions to Activated state on success.
 // Returns SUCCESS immediately if the async operation was started.
 WispersStatus wispers_node_activate_async(
     WispersNodeHandle *handle,
-    const char *pairing_code,
+    const char *activation_code,
     void *ctx,
     WispersCallback callback
 );
@@ -466,14 +466,14 @@ WispersStatus wispers_quic_stream_shutdown_async(
 // Serving
 //------------------------------------------------------------------------------
 
-// Generate a pairing code for endorsing a new node.
+// Generate an activation code for endorsing a new node.
 // The serving handle is NOT consumed.
-// On success, callback receives the pairing code string (must free with wispers_string_free).
+// On success, callback receives the activation code string (must free with wispers_string_free).
 // Returns SUCCESS immediately if the async operation was started.
-WispersStatus wispers_serving_handle_generate_pairing_code_async(
+WispersStatus wispers_serving_handle_generate_activation_code_async(
     WispersServingHandle *handle,
     void *ctx,
-    WispersPairingCodeCallback callback
+    WispersActivationCodeCallback callback
 );
 
 // Run the serving session event loop.

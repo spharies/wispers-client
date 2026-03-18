@@ -143,7 +143,7 @@ static inline WispersStatus callQuicStreamShutdownAsync(WispersQuicStreamHandle 
 }
 
 static inline WispersStatus callGenerateActivationCodeAsync(WispersServingHandle *h, void *ctx) {
-	return wispers_serving_handle_generate_pairing_code_async(h, ctx, shimWispersActivationCodeCallback);
+	return wispers_serving_handle_generate_activation_code_async(h, ctx, shimWispersActivationCodeCallback);
 }
 
 static inline WispersStatus callServingSessionRunAsync(WispersServingSession *s, void *ctx) {

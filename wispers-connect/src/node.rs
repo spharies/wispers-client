@@ -562,20 +562,20 @@ impl Node {
             .map_err(NodeStateError::hub)
     }
 
-    /// Activate this node by pairing with an endorser node.
+    /// Activate this node using an activation code from an endorser node.
     ///
     /// Requires: Registered state.
     /// Transitions to: Activated state.
     ///
-    /// The pairing code format is "node_number-secret" where secret is 10 base36 characters.
-    pub async fn activate(&mut self, pairing_code: &str) -> Result<(), NodeStateError> {
+    /// The activation code format is "node_number-secret" where secret is 10 base36 characters.
+    pub async fn activate(&mut self, activation_code: &str) -> Result<(), NodeStateError> {
         use crate::hub::HubClient;
 
         let registration = self.require_registered()?.clone();
 
-        // Parse the pairing code
+        // Parse the activation code
         let pairing_code =
-            PairingCode::parse(pairing_code).map_err(NodeStateError::InvalidPairingCode)?;
+            PairingCode::parse(activation_code).map_err(NodeStateError::InvalidActivationCode)?;
         let endorser_node_number = pairing_code.node_number;
 
         // Build the pairing request

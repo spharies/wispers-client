@@ -283,7 +283,7 @@ async fn process_request(line: &str, handle: &ServingHandle) -> Response {
             Err(e) => Response::error(format!("status failed: {}", e)),
         },
 
-        Request::GetActivationCode => match handle.generate_pairing_secret().await {
+        Request::GetActivationCode => match handle.generate_activation_code().await {
             Ok(code) => Response::success(ResponseData::ActivationCode(ActivationCodeData {
                 activation_code: code.format(),
             })),

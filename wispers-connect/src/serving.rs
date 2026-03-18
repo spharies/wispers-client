@@ -24,8 +24,8 @@ pub enum ServingError {
     Hub(#[from] crate::hub::HubError),
     #[error("session shut down")]
     SessionShutdown,
-    #[error("already have active pairing session")]
-    PairingSessionActive,
+    #[error("already have active activation session")]
+    ActivationSessionActive,
 }
 
 impl ServingError {
@@ -107,11 +107,11 @@ impl ServingHandle {
         reply_rx.await.map_err(|_| ServingError::SessionShutdown)
     }
 
-    /// Generate a pairing code for endorsing a new node.
+    /// Generate an activation code for endorsing a new node.
     ///
-    /// Returns the pairing code to share with the new node.
-    /// Only one pairing session can be active at a time.
-    pub async fn generate_pairing_secret(&self) -> Result<PairingCode, ServingError> {
+    /// Returns the activation code to share with the new node.
+    /// Only one activation session can be active at a time.
+    pub async fn generate_activation_code(&self) -> Result<PairingCode, ServingError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::GeneratePairingSecret { reply: reply_tx })
@@ -274,7 +274,7 @@ impl ServingSession {
     fn handle_generate_pairing_secret(&mut self) -> Result<PairingCode, ServingError> {
         // Block if an endorsement is actively in progress.
         if self.pending_endorsement.is_some() {
-            return Err(ServingError::PairingSessionActive);
+            return Err(ServingError::ActivationSessionActive);
         }
 
         let secret = PairingSecret::generate();

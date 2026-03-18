@@ -9,7 +9,7 @@ sealed class NodeState {
     /** Node needs to register with the hub using a registration token. */
     data object Pending : NodeState()
 
-    /** Node is registered but not yet activated (needs pairing with endorser). */
+    /** Node is registered but not yet activated (needs activation). */
     data object Registered : NodeState()
 
     /** Node is fully activated and ready for P2P connections. */

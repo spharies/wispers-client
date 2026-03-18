@@ -361,7 +361,7 @@ impl From<NodeStateError> for WispersStatus {
             NodeStateError::Hub(_) => WispersStatus::HubError,
             NodeStateError::AlreadyRegistered => WispersStatus::AlreadyRegistered,
             NodeStateError::NotRegistered => WispersStatus::NotRegistered,
-            NodeStateError::InvalidPairingCode(_) => WispersStatus::InvalidPairingCode,
+            NodeStateError::InvalidActivationCode(_) => WispersStatus::InvalidActivationCode,
             NodeStateError::MacVerificationFailed => WispersStatus::ActivationFailed,
             NodeStateError::MissingEndorserResponse => WispersStatus::ActivationFailed,
             NodeStateError::RosterVerificationFailed(_) => WispersStatus::ActivationFailed,

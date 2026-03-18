@@ -35,9 +35,9 @@ pub use node::{
 pub use serving::{
     wispers_incoming_accept_quic_async, wispers_incoming_accept_udp_async,
     wispers_incoming_connections_free, wispers_node_start_serving_async,
-    wispers_serving_handle_free, wispers_serving_handle_generate_pairing_code_async,
+    wispers_serving_handle_free, wispers_serving_handle_generate_activation_code_async,
     wispers_serving_handle_shutdown_async, wispers_serving_session_free,
-    wispers_serving_session_run_async, WispersIncomingConnections, WispersPairingCodeCallback,
+    wispers_serving_session_run_async, WispersActivationCodeCallback, WispersIncomingConnections,
     WispersServingHandle, WispersServingSession, WispersStartServingCallback,
 };
 

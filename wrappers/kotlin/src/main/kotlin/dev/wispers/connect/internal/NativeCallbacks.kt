@@ -97,11 +97,11 @@ object NativeCallbacks {
      *
      * C signature:
      * ```
-     * void (*WispersPairingCodeCallback)(
+     * void (*WispersActivationCodeCallback)(
      *     void *ctx,
      *     WispersStatus status,
      *     const char *error_detail,
-     *     char *pairing_code
+     *     char *activation_code
      * );
      * ```
      */
