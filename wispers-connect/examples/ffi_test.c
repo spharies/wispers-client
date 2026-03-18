@@ -623,11 +623,20 @@ static int test_group_info_invalid_state(void) {
 
     GroupInfoTestCtx ctx = {0};
     WispersStatus status = wispers_node_group_info_async(init_ctx.handle, &ctx, group_info_callback);
+    if (status != WISPERS_STATUS_SUCCESS) {
+        wispers_node_free(init_ctx.handle);
+        wispers_storage_free(storage);
+        FAIL("failed to start async operation");
+    }
+
+    // Wait for callback (the INVALID_STATE comes via the callback, not the sync return)
+    for (int i = 0; i < 100 && !ctx.called; i++) usleep(10000);
 
     wispers_node_free(init_ctx.handle);
     wispers_storage_free(storage);
 
-    if (status != WISPERS_STATUS_INVALID_STATE) FAIL("expected INVALID_STATE");
+    if (!ctx.called) FAIL("callback was not invoked");
+    if (ctx.status != WISPERS_STATUS_INVALID_STATE) FAIL("expected INVALID_STATE");
 
     PASS();
     return 0;
