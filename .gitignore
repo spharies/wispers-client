@@ -50,5 +50,5 @@
 /target
 
 # Compiled executables
-wispers-connect/examples/ffi_demo
-wispers-connect/examples/ffi_test
+examples/c/ffi_demo
+wispers-connect/tests/c_ffi/ffi_test
