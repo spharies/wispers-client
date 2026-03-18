@@ -1,80 +1,101 @@
 # How to use it
 
-This guide shows how to integrate Wispers Connect into your application. There
-are two main approaches: embedding the library directly, or using `wconnect` as
-a sidecar process.
+This guide shows how to integrate Wispers Connect into your application. 
 
 ## Integration patterns
 
-### Embed the library
+There are two main approaches:
 
-Link the wispers-connect library into your application for full control over the
-node lifecycle, serving, and peer-to-peer connections. This is the right choice
-when your app needs to manage connections directly — for example, a file sync
-app or a collaborative editor.
+* **Embed the library** — This gives you full control over the node lifecycle,
+  serving, and peer-to-peer connections, and it lets you define the protocol on
+  top of those peer-to-peer connections. This is the right choice if you're
+  building your own software. The library is written in Rust and exposes a C
+  FFI. Wrappers exist for Kotlin/Android and Go; more are planned (Swift,
+  Python). See [Building](../README.md#building) for setup instructions.
 
-The library is written in Rust and exposes a C FFI. Wrappers exist for
-Kotlin/Android and Go; more are planned (Swift, Python). See
-[Building](../README.md#building) for setup instructions.
+* **Use wconnect as a sidecar** — The `wconnect` tool already implements some of
+  the most popular and generic use cases of Wispers Connect — port forwarding
+  and HTTP/SOCKS proxying. Run it as a sidecar process if you have an existing
+  web app or TCP service and just want to make it reachable across devices.
 
-### Use wconnect as a sidecar
+## Configuring the Wispers Connect backends
 
-Run `wconnect` alongside your application to get port forwarding and HTTP
-proxying without linking any library. This is the right choice when you have an
-existing web app or TCP service and just want to make it reachable across
-devices.
+Before the library and wconnect can do their work, you need to tell Wispers
+about your use case.
 
-<!-- TODO: brief pointer to the sidecar section below -->
+### The Wispers Connect web app
+
+To get started, you need at least one domain and an API key for it.
+
+1. Get an account on https://connect.wispers.dev.
+2. Choose a **domain**. You can think of domains as corresponding to use
+   cases. For personal use and experimental projects, the automatically created
+   "Default" domain is sufficient. If you're planning a new application based on
+   Wispers Connect, you should probably give it its own domain.
+3. Create at least one **API key** and note it down. You can always create new
+   keys, but be careful with revoking them — if a production service relies on
+   an API key, revoking it can cause the service to fail nearly instantly. The
+   CLI tools accept API keys either as a CLI argument or as the environment
+   variable `WC_API_KEY`.
+
+### The REST API
+
+Once you have an API key it's time to talk to the REST API, or use the `wcadm`
+tool to do it for you.
+
+TODO: Explain the concrete methods to deal with connectivity groups. Also check
+that the API documentation on the server is sufficient
 
 ## Using the library
 
-### Prerequisites
-
-<!-- TODO: what you need before integrating:
-     - A Wispers Connect domain (from the web UI)
-     - An API key for creating connectivity groups and registration tokens
-     - The client library built for your platform -->
-
 ### Storage
 
-<!-- TODO: explain the NodeStateStore interface.
-     The library needs persistent storage for root keys and registration.
-     Cover:
-     - What's stored (root key, registration protobuf)
-     - Built-in options (in-memory for testing, file-based for CLI)
-     - Implementing custom storage (e.g. Android SharedPreferences, Keychain)
-     - Point to wrapper-specific examples in examples/ -->
+A Wispers Connect node has very little state, but that state should get stored
+securely. The library only comes with two built-in options, in-memory for
+testing, and file-based for CLI tools. For everything else, you need to provide
+your own implementation — either by implementing the `NodeStateStore` trait in
+Rust, or by implementing the equivalent FFI storage callbacks from a wrapper
+language. If possible, you'll want to use your platform's secure storage, like
+for example the macOS Keychain.
+
+The Kotlin wrapper implementation contains an example: See
+`/wrappers/kotlin/src/main/kotlin/dev/wispers/connect/storage`
 
 ### Node lifecycle
 
-The typical flow is: register, activate, serve, connect.
+The main object you'll deal with is the `Node`. It can be in various lifecycle
+states: "pending", "registered", "activated". The typical flow to get a Node up
+and running is this:
 
-<!-- TODO: explain each step at a conceptual level (not per-wrapper code).
-     Reference HOW_IT_WORKS.md for the protocol details.
+1. Instantiate a `NodeStorage` object using your storage implementation, then
+   call `restore_or_init_node()` on it. This will read the state from storage
+   (or if that's empty, initialise it as "pending") and return a Node.
+2. Get the Node into the "activated" state.
+   * If the Node is "pending", get a registration token and call
+     `node.register(token)`
+   * If the Node is "registered", get an activation code and call
+     `node.activate(code)`
+3. Once the node is activated (check `node.state()`), it's fully functional. You
+   can
+   * `start_serving()` to wait for other nodes to open connections to this one
+   * `connect_quic()` or `connect_udp()` to open a peer-to-peer connection to
+     another node
+   * Query `group_info()` to get the state of all nodes in the connectivity
+     group
 
-     #### Registration
-     - Integrator backend creates a registration token via REST API
-     - Token is handed to the app (deep link, QR code, paste)
-     - App calls register(token)
+If you need to reset a node, you can also call `logout()`. This will revoke the
+node's entry from the roster and deregister the node from the hub.
 
-     #### Activation
-     - Bootstrap: first two nodes pair with each other
-     - Endorsement: an activated node endorses a new one
-     - (Future: hub-trusted mode skips activation entirely)
+To understand what the different node states really mean, check out the
+explanation in [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
 
-     #### Serving
-     - What it does (connects to Hub, makes node reachable)
-     - ServingHandle vs ServingSession (see INTERNALS.md)
-     - Generating activation codes for new nodes
+### Serving
 
-     #### Connecting to peers
-     - UDP: low-latency, fire-and-forget
-     - QUIC: reliable, multiplexed streams
-     - Opening connections, sending/receiving data
+TODO: what serving does, how do handle incoming connections
 
-     #### Logout
-     - What it does at each state (deregister, self-revoke, delete local state)
--->
+### Opening connections
+
+TODO: How to open _and use_ UDP and QUIC connections
 
 ### Error handling
 
