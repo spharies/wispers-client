@@ -36,16 +36,16 @@ val ndkHome: String by lazy {
     }
 }
 
-// Common environment for cargo-ndk + cmake cross-compilation.
-// ANDROID_NDK_HOME is read by cargo-ndk and by wispers-connect's build.rs
-// (which passes it to cmake as CMAKE_TOOLCHAIN_FILE for libjuice).
 fun ExecSpec.cargoNdkEnv() {
     environment("ANDROID_NDK_HOME", ndkHome)
 }
 
+val connectClientDir = file("../..")
+
 val buildRustRelease by tasks.registering(Exec::class) {
+    group = "build"
     description = "Build libwispers_connect.so for Android via cargo-ndk"
-    workingDir = file("../client")
+    workingDir = connectClientDir
     cargoNdkEnv()
     commandLine(
         cargo, "ndk",
@@ -55,16 +55,17 @@ val buildRustRelease by tasks.registering(Exec::class) {
         "build", "--release", "-p", "wispers-connect"
     )
 
-    inputs.dir("../client/wispers-connect/src")
-    inputs.file("../client/wispers-connect/Cargo.toml")
-    inputs.file("../client/wispers-connect/build.rs")
-    inputs.file("../client/Cargo.toml")
+    inputs.dir(connectClientDir.resolve("wispers-connect/src"))
+    inputs.file(connectClientDir.resolve("wispers-connect/Cargo.toml"))
+    inputs.file(connectClientDir.resolve("wispers-connect/build.rs"))
+    inputs.file(connectClientDir.resolve("Cargo.toml"))
     outputs.dir(jniLibsDir)
 }
 
 val buildRustDebug by tasks.registering(Exec::class) {
+    group = "build"
     description = "Build libwispers_connect.so for Android (debug) via cargo-ndk"
-    workingDir = file("../client")
+    workingDir = connectClientDir
     cargoNdkEnv()
     commandLine(
         cargo, "ndk",
@@ -74,9 +75,9 @@ val buildRustDebug by tasks.registering(Exec::class) {
         "build", "-p", "wispers-connect"
     )
 
-    inputs.dir("../client/wispers-connect/src")
-    inputs.file("../client/wispers-connect/Cargo.toml")
-    inputs.file("../client/wispers-connect/build.rs")
-    inputs.file("../client/Cargo.toml")
+    inputs.dir(connectClientDir.resolve("wispers-connect/src"))
+    inputs.file(connectClientDir.resolve("wispers-connect/Cargo.toml"))
+    inputs.file(connectClientDir.resolve("wispers-connect/build.rs"))
+    inputs.file(connectClientDir.resolve("Cargo.toml"))
     outputs.dir(jniLibsDir)
 }

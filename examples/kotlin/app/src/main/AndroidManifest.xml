@@ -5,7 +5,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="Wispers Test"
+        android:label="Wispers Connect Example"
         android:theme="@style/Theme.WispersTest"
         android:usesCleartextTraffic="true">
 

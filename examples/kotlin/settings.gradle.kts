@@ -14,8 +14,8 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "wispers-test"
+rootProject.name = "wispers-connect-example"
 
 include(":app")
 include(":wispers-connect")
-project(":wispers-connect").projectDir = file("../client/wrappers/kotlin")
+project(":wispers-connect").projectDir = file("../../wrappers/kotlin")
