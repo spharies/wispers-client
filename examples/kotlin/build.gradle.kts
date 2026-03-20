@@ -48,7 +48,7 @@ val cleanRust by tasks.registering(Delete::class) {
     delete(jniLibsDir)
 }
 
-tasks.named("clean") {
+tasks.register("clean") {
     dependsOn(cleanRust)
 }
 
