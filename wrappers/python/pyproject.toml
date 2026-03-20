@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wispers-connect"
+version = "0.1.0"
+requires-python = ">=3.11"
+description = "Python ctypes wrapper for wispers-connect"
+
+[project.optional-dependencies]
+dev = ["pytest", "mypy", "ruff"]
+
+[tool.setuptools.packages.find]
+include = ["wispers_connect*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 99
+
+[tool.mypy]
+python_version = "3.11"
+strict = true

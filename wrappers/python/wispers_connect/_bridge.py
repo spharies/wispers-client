@@ -1,0 +1,215 @@
+"""Callback bridge: maps integer IDs to threading.Events for async C→Python dispatch.
+
+Same pattern as Go bridge.go (sync.Map + channels) and Kotlin CallbackBridge.kt.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import threading
+from typing import Any
+
+from ._ffi import (
+    WispersActivationCodeCallbackType,
+    WispersCallbackType,
+    WispersDataCallbackType,
+    WispersGroupInfoCallbackType,
+    WispersInitCallbackType,
+    WispersQuicConnectionCallbackType,
+    WispersQuicStreamCallbackType,
+    WispersStartServingCallbackType,
+    WispersUdpConnectionCallbackType,
+)
+from ._structs import WispersGroupInfo
+from .exceptions import raise_for_status
+from .types import ActivationStatus, GroupState, NodeInfo, NodeState
+
+
+# ---------------------------------------------------------------------------
+# Pending-call bookkeeping
+# ---------------------------------------------------------------------------
+
+class _CallbackError:
+    """Wraps an error delivered via a C callback (status + detail)."""
+    __slots__ = ("status", "detail")
+
+    def __init__(self, status: int, detail: str | None) -> None:
+        self.status = status
+        self.detail = detail
+
+
+class _PendingCall:
+    """A slot waiting for a C callback to fire."""
+    __slots__ = ("event", "result")
+
+    def __init__(self) -> None:
+        self.event = threading.Event()
+        self.result: Any = None
+
+
+_lock = threading.Lock()
+_next_id = 0
+_pending: dict[int, _PendingCall] = {}
+
+
+def _new_pending() -> tuple[int, _PendingCall]:
+    global _next_id
+    with _lock:
+        _next_id += 1
+        call_id = _next_id
+        call = _PendingCall()
+        _pending[call_id] = call
+    return call_id, call
+
+
+def _resolve(ctx_int: int | None, result: Any) -> None:
+    if ctx_int is None:
+        return
+    with _lock:
+        call = _pending.pop(ctx_int, None)
+    if call is not None:
+        call.result = result
+        call.event.set()
+
+
+def _detail_str(detail: bytes | None) -> str | None:
+    if detail is None:
+        return None
+    return detail.decode("utf-8", errors="replace")
+
+
+# ---------------------------------------------------------------------------
+# Singleton callbacks (module-level → prevent GC)
+# ---------------------------------------------------------------------------
+
+@WispersCallbackType  # type: ignore[untyped-decorator]
+def BASIC_CB(ctx: int | None, status: int, detail: bytes | None) -> None:  # noqa: N802
+    if status != 0:
+        _resolve(ctx, _CallbackError(status, _detail_str(detail)))
+    else:
+        _resolve(ctx, None)
+
+
+@WispersInitCallbackType  # type: ignore[untyped-decorator]
+def INIT_CB(ctx: int | None, status: int, detail: bytes | None,  # noqa: N802
+            node_ptr: int | None, state: int) -> None:
+    if status != 0:
+        _resolve(ctx, _CallbackError(status, _detail_str(detail)))
+    else:
+        _resolve(ctx, (node_ptr, NodeState(state)))
+
+
+@WispersGroupInfoCallbackType  # type: ignore[untyped-decorator]
+def GROUP_INFO_CB(ctx: int | None, status: int, detail: bytes | None,  # noqa: N802
+                  gi_ptr: Any) -> None:
+    if status != 0:
+        _resolve(ctx, _CallbackError(status, _detail_str(detail)))
+        return
+    # Copy node data out of C struct before freeing.
+    gi: WispersGroupInfo = gi_ptr[0]
+    state = GroupState(gi.state)
+    nodes: list[NodeInfo] = []
+    for i in range(gi.nodes_count):
+        cn = gi.nodes[i]
+        nodes.append(NodeInfo(
+            node_number=cn.node_number,
+            name=cn.name.decode("utf-8") if cn.name else "",
+            metadata=cn.metadata.decode("utf-8") if cn.metadata else "",
+            is_self=cn.is_self,
+            activation_status=ActivationStatus(cn.activation_status),
+            last_seen_at_millis=cn.last_seen_at_millis,
+            is_online=cn.is_online,
+        ))
+    from ._library import get_lib
+    get_lib().wispers_group_info_free(gi_ptr)
+    _resolve(ctx, (state, tuple(nodes)))
+
+
+@WispersStartServingCallbackType  # type: ignore[untyped-decorator]
+def START_SERVING_CB(ctx: int | None, status: int, detail: bytes | None,  # noqa: N802
+                     serving: int | None, session: int | None,
+                     incoming: int | None) -> None:
+    if status != 0:
+        _resolve(ctx, _CallbackError(status, _detail_str(detail)))
+    else:
+        _resolve(ctx, (serving, session, incoming))
+
+
+@WispersActivationCodeCallbackType  # type: ignore[untyped-decorator]
+def ACTIVATION_CODE_CB(ctx: int | None, status: int, detail: bytes | None,  # noqa: N802
+                       code_ptr: int | None) -> None:
+    if status != 0:
+        _resolve(ctx, _CallbackError(status, _detail_str(detail)))
+        return
+    # code_ptr is c_void_p (raw pointer). Read string and free.
+    code_str = ctypes.string_at(code_ptr).decode("utf-8") if code_ptr else ""
+    from ._library import get_lib
+    get_lib().wispers_string_free(code_ptr)
+    _resolve(ctx, code_str)
+
+
+@WispersUdpConnectionCallbackType  # type: ignore[untyped-decorator]
+def UDP_CONNECTION_CB(ctx: int | None, status: int, detail: bytes | None,  # noqa: N802
+                      conn: int | None) -> None:
+    if status != 0:
+        _resolve(ctx, _CallbackError(status, _detail_str(detail)))
+    else:
+        _resolve(ctx, conn)
+
+
+@WispersDataCallbackType  # type: ignore[untyped-decorator]
+def DATA_CB(ctx: int | None, status: int, detail: bytes | None,  # noqa: N802
+            data: Any, length: int) -> None:
+    if status != 0:
+        _resolve(ctx, _CallbackError(status, _detail_str(detail)))
+        return
+    # Copy data out — buffer is only valid during callback invocation.
+    if length > 0 and data:
+        buf = ctypes.string_at(data, length)
+    else:
+        buf = b""
+    _resolve(ctx, buf)
+
+
+@WispersQuicConnectionCallbackType  # type: ignore[untyped-decorator]
+def QUIC_CONNECTION_CB(ctx: int | None, status: int, detail: bytes | None,  # noqa: N802
+                       conn: int | None) -> None:
+    if status != 0:
+        _resolve(ctx, _CallbackError(status, _detail_str(detail)))
+    else:
+        _resolve(ctx, conn)
+
+
+@WispersQuicStreamCallbackType  # type: ignore[untyped-decorator]
+def QUIC_STREAM_CB(ctx: int | None, status: int, detail: bytes | None,  # noqa: N802
+                   stream: int | None) -> None:
+    if status != 0:
+        _resolve(ctx, _CallbackError(status, _detail_str(detail)))
+    else:
+        _resolve(ctx, stream)
+
+
+# ---------------------------------------------------------------------------
+# call_async — public helper
+# ---------------------------------------------------------------------------
+
+def call_async(c_fn: Any, *args: Any, cb: Any) -> Any:
+    """Call a C async function and block until the callback fires.
+
+    c_fn is called as: c_fn(*args, ctx, cb) → status
+    Returns the callback result, or raises WispersError on failure.
+    """
+    call_id, call = _new_pending()
+    ctx = ctypes.c_void_p(call_id)
+    try:
+        status = c_fn(*args, ctx, cb)
+        raise_for_status(status)
+    except Exception:
+        with _lock:
+            _pending.pop(call_id, None)
+        raise
+    call.event.wait()
+    result = call.result
+    if isinstance(result, _CallbackError):
+        raise_for_status(result.status, result.detail)
+    return result
