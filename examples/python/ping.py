@@ -1,37 +1,34 @@
 #!/usr/bin/env python3
-"""Example: register, activate, and ping a peer using wispers-connect.
+"""Example: register, activate, serve, and ping using wispers-connect.
 
-Compatible with `wconnect serve` and `wconnect ping`. Uses the same wire
-protocol:
+Compatible with `wconnect` and the C/Go examples. Uses the same wire protocol:
   - QUIC: send "PING\n", expect "PONG\n"
   - UDP:  send "ping",   expect "pong"
 
 Usage:
-    # Node A (first node — registers, serves, prints activation code):
-    python ping.py --storage /tmp/node-a --token <registration-token>
+    python ping.py status
+    python ping.py register TOKEN
+    python ping.py activate CODE
+    python ping.py nodes
+    python ping.py serve
+    python ping.py ping NODE_NUM [--quic]
 
-    # Node B (second node — registers, activates with code from A, pings A):
-    python ping.py --storage /tmp/node-b --token <registration-token> \
-        --activate <code-from-A> --ping <node-A-number>
-
-    # You can also ping a node running `wconnect serve`:
-    python ping.py --storage /tmp/node-b --ping <node-number>
-
-    # Or have `wconnect ping` talk to a node running this script:
-    wconnect ping <node-number>
-
-Both nodes must keep running for the ping to succeed. Node A runs a serving
-session in the background so it can endorse B and accept incoming connections.
+Global flags:
+    --hub ADDR        Override hub address
+    --storage DIR     Storage directory (default: platform config dir + wconnect/default/)
 """
 
 from __future__ import annotations
 
 import argparse
+import platform
 import sys
 import threading
 import time
+from pathlib import Path
 
 from wispers_connect import (
+    GroupState,
     Node,
     NodeState,
     NodeStorage,
@@ -39,12 +36,26 @@ from wispers_connect import (
 )
 
 
+def default_storage_dir() -> Path:
+    """Return the default storage dir, matching wconnect --profile default."""
+    system = platform.system()
+    if system == "Darwin":
+        return Path.home() / "Library" / "Application Support" / "wconnect" / "default"
+    else:
+        # Linux and others: XDG config dir
+        xdg = Path(
+            __import__("os").environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
+        )
+        return xdg / "wconnect" / "default"
+
+
 def print_group(node: Node) -> None:
     info = node.group_info()
     print(f"  Group state: {info.state.name}")
     for n in info.nodes:
         tag = " (self)" if n.is_self else ""
-        print(f"  Node {n.node_number}: {n.name or '(unnamed)'} — {n.activation_status.name}{tag}")
+        online = " [online]" if n.is_online else ""
+        print(f"  Node {n.node_number}: {n.name or '(unnamed)'} — {n.activation_status.name}{tag}{online}")
 
 
 def serve_in_background(session: ServingSession) -> threading.Thread:
@@ -119,125 +130,233 @@ def accept_loop(session: ServingSession) -> None:
     threading.Thread(target=accept_udp, daemon=True).start()
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="wispers-connect ping example")
-    parser.add_argument("--storage", required=True, help="Directory for node storage")
-    parser.add_argument("--token", help="Registration token (needed on first run)")
-    parser.add_argument("--hub", help="Override hub address (for staging/testing)")
-    parser.add_argument("--activate", metavar="CODE", help="Activation code from an endorser")
-    parser.add_argument("--ping", metavar="NODE_NUM", type=int, help="Peer node number to ping")
-    parser.add_argument("--udp", action="store_true", help="Use UDP instead of QUIC for ping")
-    args = parser.parse_args()
-
-    # --- Init ---
-    storage = NodeStorage.with_file_storage(args.storage)
+def init_node(args: argparse.Namespace) -> tuple[NodeStorage, Node, NodeState]:
+    """Create storage, restore or init node. Returns (storage, node, state)."""
+    storage_dir = Path(args.storage) if args.storage else default_storage_dir()
+    storage = NodeStorage.with_file_storage(storage_dir)
     if args.hub:
         storage.override_hub_addr(args.hub)
-
     node, state = storage.restore_or_init()
+    return storage, node, state
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    storage, node, state = init_node(args)
     print(f"Node state: {state.name}")
 
-    # --- Register ---
-    if state == NodeState.PENDING:
-        if not args.token:
-            sys.exit("Node is PENDING — pass --token to register.")
-        print("Registering...")
-        node.register(args.token)
-        print(f"Registered! State: {node.state.name}")
+    if state != NodeState.PENDING:
+        reg = storage.read_registration()
+        print(f"Node number: {reg.node_number}, group: {reg.connectivity_group_id}")
+        print_group(node)
+
+    node.close()
+    storage.close()
+    return 0
+
+
+def cmd_register(args: argparse.Namespace) -> int:
+    storage, node, state = init_node(args)
+
+    if state != NodeState.PENDING:
+        print(f"Cannot register: already {state.name}")
+        node.close()
+        storage.close()
+        return 1
+
+    print("Registering...")
+    node.register(args.token)
+    print(f"Registered! State: {node.state.name}")
 
     reg = storage.read_registration()
     print(f"Node number: {reg.node_number}, group: {reg.connectivity_group_id}")
 
-    # --- Start serving (needed for activation and ping) ---
-    print("Starting serving session...")
+    node.close()
+    storage.close()
+    return 0
+
+
+def cmd_activate(args: argparse.Namespace) -> int:
+    storage, node, state = init_node(args)
+
+    if state == NodeState.PENDING:
+        print("Cannot activate: not registered yet")
+        node.close()
+        storage.close()
+        return 1
+    if state == NodeState.ACTIVATED:
+        print("Already activated")
+        node.close()
+        storage.close()
+        return 1
+
+    print(f"Activating with code: {args.code}")
+    node.activate(args.code)
+    print(f"Activated! State: {node.state.name}")
+
+    node.close()
+    storage.close()
+    return 0
+
+
+def cmd_nodes(args: argparse.Namespace) -> int:
+    storage, node, state = init_node(args)
+
+    if state == NodeState.PENDING:
+        print("Not registered yet")
+        node.close()
+        storage.close()
+        return 1
+
+    print_group(node)
+
+    node.close()
+    storage.close()
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    storage, node, state = init_node(args)
+
+    if state == NodeState.PENDING:
+        print("Cannot serve: not registered yet")
+        node.close()
+        storage.close()
+        return 1
+
+    reg = storage.read_registration()
+    print(f"Node {reg.node_number} in group {reg.connectivity_group_id}")
+    print(f"Starting serving session (state: {state.name})...")
+
     session = node.start_serving()
     serve_in_background(session)
     accept_loop(session)
 
-    # --- Activate ---
-    if node.state == NodeState.REGISTERED:
-        if args.activate:
-            print(f"Activating with code: {args.activate}")
-            node.activate(args.activate)
-            print(f"Activated! State: {node.state.name}")
-        else:
-            # We're the endorser — print a code for the other node.
-            code = session.generate_activation_code()
-            print(f"\nActivation code for a new peer:\n  {code}\n")
-            print("Waiting for peer to activate (Ctrl-C to quit)...")
-            try:
-                while True:
-                    time.sleep(5)
-            except KeyboardInterrupt:
-                pass
-            session.shutdown()
-            session.close()
-            node.close()
-            storage.close()
-            return
-
-    # --- Group info ---
-    print_group(node)
-
-    # --- Ping ---
-    if args.ping is not None:
-        if node.state != NodeState.ACTIVATED:
-            sys.exit("Must be ACTIVATED to ping a peer.")
-
-        peer = args.ping
-        transport = "UDP" if args.udp else "QUIC"
-        print(f"\nPinging node {peer} via {transport}...")
-
-        start = time.monotonic()
-
-        if args.udp:
-            conn = node.connect_udp(peer)
-            connect_time = time.monotonic() - start
-            print(f"  Connected in {connect_time:.3f}s")
-
-            conn.send(b"ping")
-            pong_start = time.monotonic()
-            reply = conn.recv()
-            rtt = time.monotonic() - pong_start
-
-            if reply == b"pong":
-                print(f"  Pong received in {rtt:.3f}s")
-            else:
-                print(f"  Unexpected response: {reply!r}")
-            conn.close()
-        else:
-            conn = node.connect_quic(peer)
-            connect_time = time.monotonic() - start
-            print(f"  Connected in {connect_time:.3f}s")
-
-            stream = conn.open_stream()
-            stream.write(b"PING\n")
-            stream.finish()
-
-            pong_start = time.monotonic()
-            reply = stream.read()
-            rtt = time.monotonic() - pong_start
-
-            if reply == b"PONG\n":
-                print(f"  Pong received in {rtt:.3f}s")
-            else:
-                print(f"  Unexpected response: {reply!r}")
-            stream.close()
-            conn.close()
-
-        print(f"Ping successful! Total time: {time.monotonic() - start:.3f}s")
-    else:
-        print("\nServing (Ctrl-C to quit)...")
+    # Auto-print activation code if this node can endorse
+    if state == NodeState.REGISTERED or (state == NodeState.ACTIVATED):
         try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            pass
+            info = node.group_info()
+            if info.state in (GroupState.CAN_ENDORSE, GroupState.BOOTSTRAP):
+                code = session.generate_activation_code()
+                print(f"\nActivation code for a new peer:\n  {code}\n")
+        except Exception:
+            pass  # Not critical if this fails
+
+    print("Serving (Ctrl-C to quit)...")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
 
     session.shutdown()
     session.close()
     node.close()
     storage.close()
+    return 0
+
+
+def cmd_ping(args: argparse.Namespace) -> int:
+    storage, node, state = init_node(args)
+
+    if state != NodeState.ACTIVATED:
+        print(f"Cannot ping: must be ACTIVATED (currently {state.name})")
+        node.close()
+        storage.close()
+        return 1
+
+    # Start a serving session (needed for P2P connections)
+    session = node.start_serving()
+    serve_in_background(session)
+    accept_loop(session)
+
+    peer = args.node_num
+    use_quic = args.quic
+    transport = "QUIC" if use_quic else "UDP"
+    print(f"Pinging node {peer} via {transport}...")
+
+    start = time.monotonic()
+
+    if use_quic:
+        conn = node.connect_quic(peer)
+        connect_time = time.monotonic() - start
+        print(f"  Connected in {connect_time:.3f}s")
+
+        stream = conn.open_stream()
+        stream.write(b"PING\n")
+        stream.finish()
+
+        pong_start = time.monotonic()
+        reply = stream.read()
+        rtt = time.monotonic() - pong_start
+
+        if reply == b"PONG\n":
+            print(f"  Pong received in {rtt:.3f}s")
+        else:
+            print(f"  Unexpected response: {reply!r}")
+        stream.close()
+        conn.close()
+    else:
+        conn = node.connect_udp(peer)
+        connect_time = time.monotonic() - start
+        print(f"  Connected in {connect_time:.3f}s")
+
+        conn.send(b"ping")
+        pong_start = time.monotonic()
+        reply = conn.recv()
+        rtt = time.monotonic() - pong_start
+
+        if reply == b"pong":
+            print(f"  Pong received in {rtt:.3f}s")
+        else:
+            print(f"  Unexpected response: {reply!r}")
+        conn.close()
+
+    print(f"Ping successful! Total time: {time.monotonic() - start:.3f}s")
+
+    session.shutdown()
+    session.close()
+    node.close()
+    storage.close()
+    return 0
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="wispers-connect example (compatible with wconnect, ffi_demo, wconnect-go)",
+    )
+    parser.add_argument("--hub", help="Override hub address")
+    parser.add_argument("--storage", help="Storage directory (default: platform config dir + wconnect/default/)")
+
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("status", help="Show current node state and registration info")
+
+    p_reg = sub.add_parser("register", help="Register this node with a registration token")
+    p_reg.add_argument("token", help="Registration token")
+
+    p_act = sub.add_parser("activate", help="Activate using an activation code from an endorser")
+    p_act.add_argument("code", help="Activation code")
+
+    sub.add_parser("nodes", help="List nodes in the connectivity group")
+
+    sub.add_parser("serve", help="Serve (accept connections, print activation code if needed)")
+
+    p_ping = sub.add_parser("ping", help="Ping a peer node (UDP by default, --quic for QUIC)")
+    p_ping.add_argument("node_num", type=int, help="Peer node number")
+    p_ping.add_argument("--quic", action="store_true", help="Use QUIC instead of UDP")
+
+    args = parser.parse_args()
+
+    handlers = {
+        "status": cmd_status,
+        "register": cmd_register,
+        "activate": cmd_activate,
+        "nodes": cmd_nodes,
+        "serve": cmd_serve,
+        "ping": cmd_ping,
+    }
+
+    sys.exit(handlers[args.command](args))
 
 
 if __name__ == "__main__":

@@ -5,17 +5,20 @@
  * - Initialize/restore node state
  * - Register with hub (if needed)
  * - Activate with an activation code (if needed)
- * - Serve (for endorsing other nodes)
- * - Ping another node
+ * - List nodes in the connectivity group
+ * - Serve (for endorsing other nodes and accepting connections)
+ * - Ping another node (UDP by default, --quic for QUIC)
  *
  * This is a minimal C equivalent of what `wconnect` does.
+ * Compatible with wconnect, the Python example, and the Go example.
  *
  * Usage:
- *   ./ffi_demo [--hub <addr>] status              - Show current node state
- *   ./ffi_demo [--hub <addr>] register <token>    - Register with the given token
- *   ./ffi_demo [--hub <addr>] activate <code>     - Activate with activation code
- *   ./ffi_demo [--hub <addr>] serve [--activation-code] - Serve and optionally print activation code
- *   ./ffi_demo [--hub <addr>] ping <node_number>  - Ping another node
+ *   ./ffi_demo [--hub <addr>] [--storage <dir>] status
+ *   ./ffi_demo [--hub <addr>] [--storage <dir>] register <token>
+ *   ./ffi_demo [--hub <addr>] [--storage <dir>] activate <code>
+ *   ./ffi_demo [--hub <addr>] [--storage <dir>] nodes
+ *   ./ffi_demo [--hub <addr>] [--storage <dir>] serve
+ *   ./ffi_demo [--hub <addr>] [--storage <dir>] ping [--quic] <node_number>
  */
 
 #include "wispers_connect.h"
@@ -27,19 +30,20 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <pthread.h>
+#include <signal.h>
 
 //------------------------------------------------------------------------------
 // Constants and globals
 //------------------------------------------------------------------------------
 
-#define STATE_DIR "/.ffi_demo"
 #define ROOT_KEY_FILE "root_key.bin"
-#define REGISTRATION_FILE "registration.bin"
+#define REGISTRATION_FILE "registration.pb"
 #define ROOT_KEY_LEN 32
 #define MAX_REGISTRATION_LEN (64 * 1024)
 
 // Global options (parsed from argv before command)
 static const char *g_hub_addr = NULL;
+static const char *g_storage_dir = NULL;
 
 //------------------------------------------------------------------------------
 // Synchronization helpers using condition variables
@@ -153,6 +157,18 @@ typedef struct {
     size_t len;
 } DataCtx;
 
+typedef struct {
+    SyncState sync;
+    WispersStatus status;
+    WispersUdpConnectionHandle *connection;
+} UdpConnCtx;
+
+typedef struct {
+    SyncState sync;
+    WispersStatus status;
+    WispersGroupInfo *group_info;
+} GroupInfoCtx;
+
 //------------------------------------------------------------------------------
 // Callbacks
 //------------------------------------------------------------------------------
@@ -256,12 +272,38 @@ static void data_callback(
     sync_signal(&c->sync);
 }
 
+static void udp_conn_callback(
+    void *ctx,
+    WispersStatus status,
+    const char *error_detail,
+    WispersUdpConnectionHandle *connection
+) {
+    (void)error_detail;
+    UdpConnCtx *c = (UdpConnCtx *)ctx;
+    c->status = status;
+    c->connection = connection;
+    sync_signal(&c->sync);
+}
+
+static void group_info_callback(
+    void *ctx,
+    WispersStatus status,
+    const char *error_detail,
+    WispersGroupInfo *group_info
+) {
+    (void)error_detail;
+    GroupInfoCtx *c = (GroupInfoCtx *)ctx;
+    c->status = status;
+    c->group_info = group_info;
+    sync_signal(&c->sync);
+}
+
 //------------------------------------------------------------------------------
 // File-based storage implementation
 //------------------------------------------------------------------------------
 
 typedef struct {
-    char dir_path[512];  // e.g., "/home/user/.ffi_demo"
+    char dir_path[512];
 } StorageCtx;
 
 static void build_file_path(char *out, size_t out_len, const char *dir, const char *filename) {
@@ -389,19 +431,49 @@ static WispersStatus delete_registration(void *ctx) {
     return WISPERS_STATUS_SUCCESS;
 }
 
+// Recursively create directories (like mkdir -p)
+static void mkdir_p(const char *path) {
+    char tmp[512];
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            mkdir(tmp, 0700);
+            *p = '/';
+        }
+    }
+    mkdir(tmp, 0700);
+}
+
+static void default_storage_path(char *out, size_t out_len) {
+#ifdef __APPLE__
+    const char *home = getenv("HOME");
+    if (!home) home = "/tmp";
+    snprintf(out, out_len, "%s/Library/Application Support/wconnect/default", home);
+#else
+    const char *xdg = getenv("XDG_CONFIG_HOME");
+    if (xdg && xdg[0]) {
+        snprintf(out, out_len, "%s/wconnect/default", xdg);
+    } else {
+        const char *home = getenv("HOME");
+        if (!home) home = "/tmp";
+        snprintf(out, out_len, "%s/.config/wconnect/default", home);
+    }
+#endif
+}
+
 static WispersNodeStorageHandle *create_storage(StorageCtx **out_ctx) {
     StorageCtx *ctx = calloc(1, sizeof(StorageCtx));
     if (!ctx) {
         return NULL;
     }
 
-    // Build path: $HOME/.ffi_demo
-    const char *home = getenv("HOME");
-    if (!home) {
-        home = "/tmp";
+    if (g_storage_dir) {
+        snprintf(ctx->dir_path, sizeof(ctx->dir_path), "%s", g_storage_dir);
+    } else {
+        default_storage_path(ctx->dir_path, sizeof(ctx->dir_path));
     }
-    snprintf(ctx->dir_path, sizeof(ctx->dir_path), "%s%s", home, STATE_DIR);
-    mkdir(ctx->dir_path, 0700);  // Create if not exists, ignore errors
+    mkdir_p(ctx->dir_path);
 
     WispersNodeStorageCallbacks callbacks = {
         .ctx = ctx,
@@ -459,17 +531,61 @@ static const char *state_str(WispersNodeState state) {
     }
 }
 
+static const char *group_state_str(WispersGroupState state) {
+    switch (state) {
+        case WISPERS_GROUP_STATE_ALONE: return "Alone";
+        case WISPERS_GROUP_STATE_BOOTSTRAP: return "Bootstrap";
+        case WISPERS_GROUP_STATE_NEED_ACTIVATION: return "NeedActivation";
+        case WISPERS_GROUP_STATE_CAN_ENDORSE: return "CanEndorse";
+        case WISPERS_GROUP_STATE_ALL_ACTIVATED: return "AllActivated";
+        default: return "Unknown";
+    }
+}
+
+static const char *activation_status_str(int status) {
+    switch (status) {
+        case WISPERS_ACTIVATION_UNKNOWN: return "Unknown";
+        case WISPERS_ACTIVATION_NOT_ACTIVATED: return "NotActivated";
+        case WISPERS_ACTIVATION_ACTIVATED: return "Activated";
+        default: return "Unknown";
+    }
+}
+
+//------------------------------------------------------------------------------
+// Helper: restore node from storage
+//------------------------------------------------------------------------------
+
+// Restores node state. Returns 0 on success, 1 on error.
+static int restore_node(WispersNodeStorageHandle *storage, InitCtx *init_ctx) {
+    sync_init(&init_ctx->sync);
+    WispersStatus status = wispers_storage_restore_or_init_async(storage, init_ctx, init_callback);
+    if (status != WISPERS_STATUS_SUCCESS) {
+        fprintf(stderr, "Failed to start restore: %s\n", status_str(status));
+        sync_destroy(&init_ctx->sync);
+        return 1;
+    }
+
+    if (!sync_wait(&init_ctx->sync, 5000) || init_ctx->status != WISPERS_STATUS_SUCCESS) {
+        fprintf(stderr, "Failed to restore state: %s\n",
+                sync_is_called(&init_ctx->sync) ? status_str(init_ctx->status) : "timeout");
+        sync_destroy(&init_ctx->sync);
+        return 1;
+    }
+    return 0;
+}
+
 //------------------------------------------------------------------------------
 // Commands
 //------------------------------------------------------------------------------
 
 static void print_usage(const char *program) {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s [--hub <addr>] status              - Show current node state\n", program);
-    fprintf(stderr, "  %s [--hub <addr>] register <token>    - Register with the given token\n", program);
-    fprintf(stderr, "  %s [--hub <addr>] activate <code>     - Activate with activation code\n", program);
-    fprintf(stderr, "  %s [--hub <addr>] serve [--activation-code] - Serve and optionally print activation code\n", program);
-    fprintf(stderr, "  %s [--hub <addr>] ping <node_number>  - Ping another node\n", program);
+    fprintf(stderr, "  %s [--hub <addr>] [--storage <dir>] status\n", program);
+    fprintf(stderr, "  %s [--hub <addr>] [--storage <dir>] register <token>\n", program);
+    fprintf(stderr, "  %s [--hub <addr>] [--storage <dir>] activate <code>\n", program);
+    fprintf(stderr, "  %s [--hub <addr>] [--storage <dir>] nodes\n", program);
+    fprintf(stderr, "  %s [--hub <addr>] [--storage <dir>] serve\n", program);
+    fprintf(stderr, "  %s [--hub <addr>] [--storage <dir>] ping [--quic] <node_number>\n", program);
 }
 
 static int cmd_status(void) {
@@ -480,28 +596,8 @@ static int cmd_status(void) {
         return 1;
     }
 
-    InitCtx ctx = {0};
-    sync_init(&ctx.sync);
-    WispersStatus status = wispers_storage_restore_or_init_async(storage, &ctx, init_callback);
-    if (status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to start restore: %s\n", status_str(status));
-        sync_destroy(&ctx.sync);
-        wispers_storage_free(storage);
-        free(storage_ctx);
-        return 1;
-    }
-
-    if (!sync_wait(&ctx.sync, 5000)) {
-        fprintf(stderr, "Timeout waiting for restore callback\n");
-        sync_destroy(&ctx.sync);
-        wispers_storage_free(storage);
-        free(storage_ctx);
-        return 1;
-    }
-
-    if (ctx.status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Restore failed: %s\n", status_str(ctx.status));
-        sync_destroy(&ctx.sync);
+    InitCtx init_ctx = {0};
+    if (restore_node(storage, &init_ctx)) {
         wispers_storage_free(storage);
         free(storage_ctx);
         return 1;
@@ -513,14 +609,33 @@ static int cmd_status(void) {
 
     if (read_status == WISPERS_STATUS_SUCCESS) {
         printf("Node state: %s (node %d in group %s)\n",
-               state_str(ctx.state), info.node_number, info.connectivity_group_id);
+               state_str(init_ctx.state), info.node_number, info.connectivity_group_id);
         wispers_registration_info_free(&info);
+
+        // Show group info
+        GroupInfoCtx gi_ctx = {0};
+        sync_init(&gi_ctx.sync);
+        WispersStatus gi_status = wispers_node_group_info_async(init_ctx.handle, &gi_ctx, group_info_callback);
+        if (gi_status == WISPERS_STATUS_SUCCESS && sync_wait(&gi_ctx.sync, 5000) && gi_ctx.status == WISPERS_STATUS_SUCCESS) {
+            printf("  Group state: %s\n", group_state_str(gi_ctx.group_info->state));
+            for (size_t i = 0; i < gi_ctx.group_info->nodes_count; i++) {
+                WispersNode *n = &gi_ctx.group_info->nodes[i];
+                printf("  Node %d: %s — %s%s%s\n",
+                       n->node_number,
+                       n->name ? n->name : "(unnamed)",
+                       activation_status_str(n->activation_status),
+                       n->is_self ? " (self)" : "",
+                       n->is_online ? " [online]" : "");
+            }
+            wispers_group_info_free(gi_ctx.group_info);
+        }
+        sync_destroy(&gi_ctx.sync);
     } else {
-        printf("Node state: %s\n", state_str(ctx.state));
+        printf("Node state: %s\n", state_str(init_ctx.state));
     }
 
-    wispers_node_free(ctx.handle);
-    sync_destroy(&ctx.sync);
+    wispers_node_free(init_ctx.handle);
+    sync_destroy(&init_ctx.sync);
     wispers_storage_free(storage);
     free(storage_ctx);
     return 0;
@@ -534,22 +649,8 @@ static int cmd_register(const char *token) {
         return 1;
     }
 
-    // First, restore state to get current stage
     InitCtx init_ctx = {0};
-    sync_init(&init_ctx.sync);
-    WispersStatus status = wispers_storage_restore_or_init_async(storage, &init_ctx, init_callback);
-    if (status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to start restore: %s\n", status_str(status));
-        sync_destroy(&init_ctx.sync);
-        wispers_storage_free(storage);
-        free(storage_ctx);
-        return 1;
-    }
-
-    if (!sync_wait(&init_ctx.sync, 5000) || init_ctx.status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to restore state: %s\n",
-                sync_is_called(&init_ctx.sync) ? status_str(init_ctx.status) : "timeout");
-        sync_destroy(&init_ctx.sync);
+    if (restore_node(storage, &init_ctx)) {
         wispers_storage_free(storage);
         free(storage_ctx);
         return 1;
@@ -569,7 +670,7 @@ static int cmd_register(const char *token) {
     printf("Registering with hub...\n");
     BasicCtx reg_ctx = {0};
     sync_init(&reg_ctx.sync);
-    status = wispers_node_register_async(init_ctx.handle, token, &reg_ctx, basic_callback);
+    WispersStatus status = wispers_node_register_async(init_ctx.handle, token, &reg_ctx, basic_callback);
     if (status != WISPERS_STATUS_SUCCESS) {
         fprintf(stderr, "Failed to start registration: %s\n", status_str(status));
         wispers_node_free(init_ctx.handle);
@@ -627,22 +728,8 @@ static int cmd_activate(const char *activation_code) {
         return 1;
     }
 
-    // First, restore state to get current stage
     InitCtx init_ctx = {0};
-    sync_init(&init_ctx.sync);
-    WispersStatus status = wispers_storage_restore_or_init_async(storage, &init_ctx, init_callback);
-    if (status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to start restore: %s\n", status_str(status));
-        sync_destroy(&init_ctx.sync);
-        wispers_storage_free(storage);
-        free(storage_ctx);
-        return 1;
-    }
-
-    if (!sync_wait(&init_ctx.sync, 5000) || init_ctx.status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to restore state: %s\n",
-                sync_is_called(&init_ctx.sync) ? status_str(init_ctx.status) : "timeout");
-        sync_destroy(&init_ctx.sync);
+    if (restore_node(storage, &init_ctx)) {
         wispers_storage_free(storage);
         free(storage_ctx);
         return 1;
@@ -670,7 +757,7 @@ static int cmd_activate(const char *activation_code) {
     printf("Activating with activation code...\n");
     BasicCtx act_ctx = {0};
     sync_init(&act_ctx.sync);
-    status = wispers_node_activate_async(init_ctx.handle, activation_code, &act_ctx, basic_callback);
+    WispersStatus status = wispers_node_activate_async(init_ctx.handle, activation_code, &act_ctx, basic_callback);
     if (status != WISPERS_STATUS_SUCCESS) {
         fprintf(stderr, "Failed to start activation: %s\n", status_str(status));
         wispers_node_free(init_ctx.handle);
@@ -706,6 +793,74 @@ static int cmd_activate(const char *activation_code) {
 
     wispers_node_free(init_ctx.handle);
     sync_destroy(&act_ctx.sync);
+    sync_destroy(&init_ctx.sync);
+    wispers_storage_free(storage);
+    free(storage_ctx);
+    return 0;
+}
+
+static int cmd_nodes(void) {
+    StorageCtx *storage_ctx = NULL;
+    WispersNodeStorageHandle *storage = create_storage(&storage_ctx);
+    if (!storage) {
+        fprintf(stderr, "Failed to create storage\n");
+        return 1;
+    }
+
+    InitCtx init_ctx = {0};
+    if (restore_node(storage, &init_ctx)) {
+        wispers_storage_free(storage);
+        free(storage_ctx);
+        return 1;
+    }
+
+    if (init_ctx.state == WISPERS_NODE_STATE_PENDING) {
+        fprintf(stderr, "Not registered yet\n");
+        wispers_node_free(init_ctx.handle);
+        sync_destroy(&init_ctx.sync);
+        wispers_storage_free(storage);
+        free(storage_ctx);
+        return 1;
+    }
+
+    GroupInfoCtx gi_ctx = {0};
+    sync_init(&gi_ctx.sync);
+    WispersStatus status = wispers_node_group_info_async(init_ctx.handle, &gi_ctx, group_info_callback);
+    if (status != WISPERS_STATUS_SUCCESS) {
+        fprintf(stderr, "Failed to start group_info: %s\n", status_str(status));
+        sync_destroy(&gi_ctx.sync);
+        wispers_node_free(init_ctx.handle);
+        sync_destroy(&init_ctx.sync);
+        wispers_storage_free(storage);
+        free(storage_ctx);
+        return 1;
+    }
+
+    if (!sync_wait(&gi_ctx.sync, 5000) || gi_ctx.status != WISPERS_STATUS_SUCCESS) {
+        fprintf(stderr, "Failed to get group info: %s\n",
+                sync_is_called(&gi_ctx.sync) ? status_str(gi_ctx.status) : "timeout");
+        sync_destroy(&gi_ctx.sync);
+        wispers_node_free(init_ctx.handle);
+        sync_destroy(&init_ctx.sync);
+        wispers_storage_free(storage);
+        free(storage_ctx);
+        return 1;
+    }
+
+    printf("  Group state: %s\n", group_state_str(gi_ctx.group_info->state));
+    for (size_t i = 0; i < gi_ctx.group_info->nodes_count; i++) {
+        WispersNode *n = &gi_ctx.group_info->nodes[i];
+        printf("  Node %d: %s — %s%s%s\n",
+               n->node_number,
+               n->name ? n->name : "(unnamed)",
+               activation_status_str(n->activation_status),
+               n->is_self ? " (self)" : "",
+               n->is_online ? " [online]" : "");
+    }
+    wispers_group_info_free(gi_ctx.group_info);
+
+    sync_destroy(&gi_ctx.sync);
+    wispers_node_free(init_ctx.handle);
     sync_destroy(&init_ctx.sync);
     wispers_storage_free(storage);
     free(storage_ctx);
@@ -804,7 +959,99 @@ static void handle_quic_connection(WispersQuicConnectionHandle *conn) {
     wispers_quic_stream_free(stream_ctx.stream);
 }
 
-static int cmd_serve(int print_activation_code) {
+// Handle a single UDP connection: read ping, respond with pong
+static void *handle_udp_connection_thread(void *arg) {
+    WispersUdpConnectionHandle *conn = (WispersUdpConnectionHandle *)arg;
+
+    while (1) {
+        DataCtx recv_ctx = {0};
+        sync_init(&recv_ctx.sync);
+        WispersStatus status = wispers_udp_connection_recv_async(conn, &recv_ctx, data_callback);
+        if (status != WISPERS_STATUS_SUCCESS) {
+            sync_destroy(&recv_ctx.sync);
+            break;
+        }
+
+        if (!sync_wait(&recv_ctx.sync, 30000) || recv_ctx.status != WISPERS_STATUS_SUCCESS) {
+            sync_destroy(&recv_ctx.sync);
+            break;
+        }
+
+        if (recv_ctx.len == 4 && memcmp(recv_ctx.data, "ping", 4) == 0) {
+            printf("  Received ping, sending pong\n");
+            wispers_udp_connection_send(conn, (const uint8_t *)"pong", 4);
+        } else {
+            printf("  Received %zu bytes\n", recv_ctx.len);
+        }
+        sync_destroy(&recv_ctx.sync);
+    }
+
+    wispers_udp_connection_close(conn);
+    return NULL;
+}
+
+// Thread function for accepting QUIC connections
+static void *accept_quic_thread(void *arg) {
+    WispersIncomingConnections *incoming = (WispersIncomingConnections *)arg;
+
+    while (1) {
+        QuicConnCtx conn_ctx = {0};
+        sync_init(&conn_ctx.sync);
+        WispersStatus status = wispers_incoming_accept_quic_async(incoming, &conn_ctx, quic_conn_callback);
+        if (status != WISPERS_STATUS_SUCCESS) {
+            sync_destroy(&conn_ctx.sync);
+            break;
+        }
+
+        if (!sync_wait(&conn_ctx.sync, 0x7FFFFFFF) || conn_ctx.status != WISPERS_STATUS_SUCCESS) {
+            sync_destroy(&conn_ctx.sync);
+            break;
+        }
+
+        printf("Incoming QUIC connection accepted\n");
+        handle_quic_connection(conn_ctx.connection);
+
+        BasicCtx close_ctx = {0};
+        sync_init(&close_ctx.sync);
+        wispers_quic_connection_close_async(conn_ctx.connection, &close_ctx, basic_callback);
+        sync_wait(&close_ctx.sync, 5000);
+        sync_destroy(&close_ctx.sync);
+
+        printf("Connection closed\n");
+        sync_destroy(&conn_ctx.sync);
+    }
+    return NULL;
+}
+
+// Thread function for accepting UDP connections
+static void *accept_udp_thread(void *arg) {
+    WispersIncomingConnections *incoming = (WispersIncomingConnections *)arg;
+
+    while (1) {
+        UdpConnCtx conn_ctx = {0};
+        sync_init(&conn_ctx.sync);
+        WispersStatus status = wispers_incoming_accept_udp_async(incoming, &conn_ctx, udp_conn_callback);
+        if (status != WISPERS_STATUS_SUCCESS) {
+            sync_destroy(&conn_ctx.sync);
+            break;
+        }
+
+        if (!sync_wait(&conn_ctx.sync, 0x7FFFFFFF) || conn_ctx.status != WISPERS_STATUS_SUCCESS) {
+            sync_destroy(&conn_ctx.sync);
+            break;
+        }
+
+        printf("Incoming UDP connection accepted\n");
+        pthread_t t;
+        pthread_create(&t, NULL, handle_udp_connection_thread, conn_ctx.connection);
+        pthread_detach(t);
+
+        sync_destroy(&conn_ctx.sync);
+    }
+    return NULL;
+}
+
+static int cmd_serve(void) {
     StorageCtx *storage_ctx = NULL;
     WispersNodeStorageHandle *storage = create_storage(&storage_ctx);
     if (!storage) {
@@ -812,22 +1059,8 @@ static int cmd_serve(int print_activation_code) {
         return 1;
     }
 
-    // First, restore state to get current stage
     InitCtx init_ctx = {0};
-    sync_init(&init_ctx.sync);
-    WispersStatus status = wispers_storage_restore_or_init_async(storage, &init_ctx, init_callback);
-    if (status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to start restore: %s\n", status_str(status));
-        sync_destroy(&init_ctx.sync);
-        wispers_storage_free(storage);
-        free(storage_ctx);
-        return 1;
-    }
-
-    if (!sync_wait(&init_ctx.sync, 5000) || init_ctx.status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to restore state: %s\n",
-                sync_is_called(&init_ctx.sync) ? status_str(init_ctx.status) : "timeout");
-        sync_destroy(&init_ctx.sync);
+    if (restore_node(storage, &init_ctx)) {
         wispers_storage_free(storage);
         free(storage_ctx);
         return 1;
@@ -846,12 +1079,8 @@ static int cmd_serve(int print_activation_code) {
     // Start serving
     ServingCtx serv_ctx = {0};
     sync_init(&serv_ctx.sync);
-    if (init_ctx.state == WISPERS_NODE_STATE_REGISTERED) {
-        printf("Starting serving session (registered node - bootstrap only)...\n");
-    } else {
-        printf("Starting serving session (activated node)...\n");
-    }
-    status = wispers_node_start_serving_async(init_ctx.handle, &serv_ctx, serving_callback);
+    printf("Starting serving session (state: %s)...\n", state_str(init_ctx.state));
+    WispersStatus status = wispers_node_start_serving_async(init_ctx.handle, &serv_ctx, serving_callback);
 
     if (status != WISPERS_STATUS_SUCCESS) {
         fprintf(stderr, "Failed to start serving: %s\n", status_str(status));
@@ -886,27 +1115,26 @@ static int cmd_serve(int print_activation_code) {
 
     printf("Serving session started\n");
 
-    // Generate and print activation code if requested
-    if (print_activation_code) {
-        ActivationCodeCtx ac_ctx = {0};
-        sync_init(&ac_ctx.sync);
-        status = wispers_serving_handle_generate_activation_code_async(serv_ctx.serving, &ac_ctx, activation_code_callback);
-        if (status == WISPERS_STATUS_SUCCESS) {
-            if (sync_wait(&ac_ctx.sync, 10000) && ac_ctx.status == WISPERS_STATUS_SUCCESS && ac_ctx.activation_code) {
-                printf("Activation code: %s\n", ac_ctx.activation_code);
+    // Auto-print activation code if group state allows endorsing
+    GroupInfoCtx gi_ctx = {0};
+    sync_init(&gi_ctx.sync);
+    status = wispers_node_group_info_async(init_ctx.handle, &gi_ctx, group_info_callback);
+    if (status == WISPERS_STATUS_SUCCESS && sync_wait(&gi_ctx.sync, 5000) && gi_ctx.status == WISPERS_STATUS_SUCCESS) {
+        if (gi_ctx.group_info->state == WISPERS_GROUP_STATE_CAN_ENDORSE ||
+            gi_ctx.group_info->state == WISPERS_GROUP_STATE_BOOTSTRAP) {
+            ActivationCodeCtx ac_ctx = {0};
+            sync_init(&ac_ctx.sync);
+            status = wispers_serving_handle_generate_activation_code_async(serv_ctx.serving, &ac_ctx, activation_code_callback);
+            if (status == WISPERS_STATUS_SUCCESS && sync_wait(&ac_ctx.sync, 10000) &&
+                ac_ctx.status == WISPERS_STATUS_SUCCESS && ac_ctx.activation_code) {
+                printf("\nActivation code for a new peer:\n  %s\n\n", ac_ctx.activation_code);
                 wispers_string_free(ac_ctx.activation_code);
-            } else if (sync_is_called(&ac_ctx.sync)) {
-                fprintf(stderr, "Failed to generate activation code: %s\n", status_str(ac_ctx.status));
-            } else {
-                fprintf(stderr, "Timeout generating activation code\n");
             }
-        } else {
-            fprintf(stderr, "Failed to start activation code generation: %s\n", status_str(status));
+            sync_destroy(&ac_ctx.sync);
         }
-        sync_destroy(&ac_ctx.sync);
+        wispers_group_info_free(gi_ctx.group_info);
     }
-
-    printf("Serving... (press Ctrl-C to stop)\n");
+    sync_destroy(&gi_ctx.sync);
 
     // Run the serving session in background
     BasicCtx run_ctx = {0};
@@ -926,53 +1154,21 @@ static int cmd_serve(int print_activation_code) {
         return 1;
     }
 
-    // If activated, handle incoming QUIC connections with ping/pong responder
+    // Accept incoming connections in background threads
     if (serv_ctx.incoming != NULL) {
-        printf("Listening for incoming QUIC connections...\n");
-        while (!sync_is_called(&run_ctx.sync)) {
-            // Try to accept an incoming QUIC connection
-            QuicConnCtx conn_ctx = {0};
-            sync_init(&conn_ctx.sync);
-            status = wispers_incoming_accept_quic_async(serv_ctx.incoming, &conn_ctx, quic_conn_callback);
-            if (status != WISPERS_STATUS_SUCCESS) {
-                fprintf(stderr, "Failed to start accept_quic: %s\n", status_str(status));
-                sync_destroy(&conn_ctx.sync);
-                usleep(1000000);  // Wait 1s before retrying
-                continue;
-            }
+        printf("Listening for incoming connections...\n");
 
-            // Wait for connection with periodic checks if session ended
-            while (!sync_is_called(&conn_ctx.sync) && !sync_is_called(&run_ctx.sync)) {
-                usleep(100000);  // 100ms
-            }
-
-            if (sync_is_called(&run_ctx.sync)) {
-                sync_destroy(&conn_ctx.sync);
-                break;
-            }
-
-            if (conn_ctx.status == WISPERS_STATUS_SUCCESS && conn_ctx.connection) {
-                printf("Incoming QUIC connection accepted\n");
-                handle_quic_connection(conn_ctx.connection);
-
-                // Close the connection
-                BasicCtx close_ctx = {0};
-                sync_init(&close_ctx.sync);
-                wispers_quic_connection_close_async(conn_ctx.connection, &close_ctx, basic_callback);
-                sync_wait(&close_ctx.sync, 5000);
-                sync_destroy(&close_ctx.sync);
-
-                printf("Connection closed\n");
-            } else if (sync_is_called(&conn_ctx.sync)) {
-                fprintf(stderr, "Accept failed: %s\n", status_str(conn_ctx.status));
-            }
-
-            sync_destroy(&conn_ctx.sync);
-        }
-    } else {
-        // Just wait for session to end
-        sync_wait(&run_ctx.sync, 0x7FFFFFFF);  // Wait forever
+        pthread_t quic_thread, udp_thread;
+        pthread_create(&quic_thread, NULL, accept_quic_thread, serv_ctx.incoming);
+        pthread_detach(quic_thread);
+        pthread_create(&udp_thread, NULL, accept_udp_thread, serv_ctx.incoming);
+        pthread_detach(udp_thread);
     }
+
+    printf("Serving... (press Ctrl-C to stop)\n");
+
+    // Wait for session to end (or Ctrl-C)
+    sync_wait(&run_ctx.sync, 0x7FFFFFFF);
 
     printf("Serving session ended: %s\n", status_str(run_ctx.status));
 
@@ -987,7 +1183,7 @@ static int cmd_serve(int print_activation_code) {
     return 0;
 }
 
-static int cmd_ping(int peer_node_number) {
+static int cmd_ping(int peer_node_number, int use_quic) {
     StorageCtx *storage_ctx = NULL;
     WispersNodeStorageHandle *storage = create_storage(&storage_ctx);
     if (!storage) {
@@ -995,22 +1191,8 @@ static int cmd_ping(int peer_node_number) {
         return 1;
     }
 
-    // First, restore state
     InitCtx init_ctx = {0};
-    sync_init(&init_ctx.sync);
-    WispersStatus status = wispers_storage_restore_or_init_async(storage, &init_ctx, init_callback);
-    if (status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to start restore: %s\n", status_str(status));
-        sync_destroy(&init_ctx.sync);
-        wispers_storage_free(storage);
-        free(storage_ctx);
-        return 1;
-    }
-
-    if (!sync_wait(&init_ctx.sync, 5000) || init_ctx.status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to restore state: %s\n",
-                sync_is_called(&init_ctx.sync) ? status_str(init_ctx.status) : "timeout");
-        sync_destroy(&init_ctx.sync);
+    if (restore_node(storage, &init_ctx)) {
         wispers_storage_free(storage);
         free(storage_ctx);
         return 1;
@@ -1026,127 +1208,194 @@ static int cmd_ping(int peer_node_number) {
         return 1;
     }
 
-    printf("Connecting to node %d via QUIC...\n", peer_node_number);
+    if (use_quic) {
+        printf("Connecting to node %d via QUIC...\n", peer_node_number);
 
-    // Connect to peer
-    QuicConnCtx conn_ctx = {0};
-    sync_init(&conn_ctx.sync);
-    status = wispers_node_connect_quic_async(init_ctx.handle, peer_node_number, &conn_ctx, quic_conn_callback);
-    if (status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to start connect: %s\n", status_str(status));
-        sync_destroy(&conn_ctx.sync);
-        sync_destroy(&init_ctx.sync);
-        wispers_node_free(init_ctx.handle);
-        wispers_storage_free(storage);
-        free(storage_ctx);
-        return 1;
-    }
+        // Connect to peer
+        QuicConnCtx conn_ctx = {0};
+        sync_init(&conn_ctx.sync);
+        WispersStatus status = wispers_node_connect_quic_async(init_ctx.handle, peer_node_number, &conn_ctx, quic_conn_callback);
+        if (status != WISPERS_STATUS_SUCCESS) {
+            fprintf(stderr, "Failed to start connect: %s\n", status_str(status));
+            sync_destroy(&conn_ctx.sync);
+            sync_destroy(&init_ctx.sync);
+            wispers_node_free(init_ctx.handle);
+            wispers_storage_free(storage);
+            free(storage_ctx);
+            return 1;
+        }
 
-    if (!sync_wait(&conn_ctx.sync, 30000) || conn_ctx.status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to connect: %s\n",
-                sync_is_called(&conn_ctx.sync) ? status_str(conn_ctx.status) : "timeout");
-        sync_destroy(&conn_ctx.sync);
-        sync_destroy(&init_ctx.sync);
-        wispers_node_free(init_ctx.handle);
-        wispers_storage_free(storage);
-        free(storage_ctx);
-        return 1;
-    }
+        if (!sync_wait(&conn_ctx.sync, 30000) || conn_ctx.status != WISPERS_STATUS_SUCCESS) {
+            fprintf(stderr, "Failed to connect: %s\n",
+                    sync_is_called(&conn_ctx.sync) ? status_str(conn_ctx.status) : "timeout");
+            sync_destroy(&conn_ctx.sync);
+            sync_destroy(&init_ctx.sync);
+            wispers_node_free(init_ctx.handle);
+            wispers_storage_free(storage);
+            free(storage_ctx);
+            return 1;
+        }
 
-    printf("Connected! Opening stream...\n");
+        printf("Connected! Opening stream...\n");
 
-    // Open a stream
-    QuicStreamCtx stream_ctx = {0};
-    sync_init(&stream_ctx.sync);
-    status = wispers_quic_connection_open_stream_async(conn_ctx.connection, &stream_ctx, quic_stream_callback);
-    if (status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to start open_stream: %s\n", status_str(status));
-        wispers_quic_connection_free(conn_ctx.connection);
-        sync_destroy(&stream_ctx.sync);
-        sync_destroy(&conn_ctx.sync);
-        sync_destroy(&init_ctx.sync);
-        wispers_node_free(init_ctx.handle);
-        wispers_storage_free(storage);
-        free(storage_ctx);
-        return 1;
-    }
+        // Open a stream
+        QuicStreamCtx stream_ctx = {0};
+        sync_init(&stream_ctx.sync);
+        status = wispers_quic_connection_open_stream_async(conn_ctx.connection, &stream_ctx, quic_stream_callback);
+        if (status != WISPERS_STATUS_SUCCESS) {
+            fprintf(stderr, "Failed to start open_stream: %s\n", status_str(status));
+            wispers_quic_connection_free(conn_ctx.connection);
+            sync_destroy(&stream_ctx.sync);
+            sync_destroy(&conn_ctx.sync);
+            sync_destroy(&init_ctx.sync);
+            wispers_node_free(init_ctx.handle);
+            wispers_storage_free(storage);
+            free(storage_ctx);
+            return 1;
+        }
 
-    if (!sync_wait(&stream_ctx.sync, 10000) || stream_ctx.status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to open stream: %s\n",
-                sync_is_called(&stream_ctx.sync) ? status_str(stream_ctx.status) : "timeout");
-        wispers_quic_connection_free(conn_ctx.connection);
-        sync_destroy(&stream_ctx.sync);
-        sync_destroy(&conn_ctx.sync);
-        sync_destroy(&init_ctx.sync);
-        wispers_node_free(init_ctx.handle);
-        wispers_storage_free(storage);
-        free(storage_ctx);
-        return 1;
-    }
+        if (!sync_wait(&stream_ctx.sync, 10000) || stream_ctx.status != WISPERS_STATUS_SUCCESS) {
+            fprintf(stderr, "Failed to open stream: %s\n",
+                    sync_is_called(&stream_ctx.sync) ? status_str(stream_ctx.status) : "timeout");
+            wispers_quic_connection_free(conn_ctx.connection);
+            sync_destroy(&stream_ctx.sync);
+            sync_destroy(&conn_ctx.sync);
+            sync_destroy(&init_ctx.sync);
+            wispers_node_free(init_ctx.handle);
+            wispers_storage_free(storage);
+            free(storage_ctx);
+            return 1;
+        }
 
-    printf("Stream opened. Sending PING...\n");
+        printf("Stream opened. Sending PING...\n");
 
-    // Send PING
-    const uint8_t ping_data[] = "PING\n";
-    BasicCtx write_ctx = {0};
-    sync_init(&write_ctx.sync);
-    status = wispers_quic_stream_write_async(stream_ctx.stream, ping_data, sizeof(ping_data) - 1, &write_ctx, basic_callback);
-    if (status != WISPERS_STATUS_SUCCESS || !sync_wait(&write_ctx.sync, 10000) || write_ctx.status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to send PING\n");
+        // Send PING
+        const uint8_t ping_data[] = "PING\n";
+        BasicCtx write_ctx = {0};
+        sync_init(&write_ctx.sync);
+        status = wispers_quic_stream_write_async(stream_ctx.stream, ping_data, sizeof(ping_data) - 1, &write_ctx, basic_callback);
+        if (status != WISPERS_STATUS_SUCCESS || !sync_wait(&write_ctx.sync, 10000) || write_ctx.status != WISPERS_STATUS_SUCCESS) {
+            fprintf(stderr, "Failed to send PING\n");
+            wispers_quic_stream_free(stream_ctx.stream);
+            wispers_quic_connection_free(conn_ctx.connection);
+            sync_destroy(&write_ctx.sync);
+            sync_destroy(&stream_ctx.sync);
+            sync_destroy(&conn_ctx.sync);
+            sync_destroy(&init_ctx.sync);
+            wispers_node_free(init_ctx.handle);
+            wispers_storage_free(storage);
+            free(storage_ctx);
+            return 1;
+        }
+
+        // Finish sending
+        BasicCtx finish_ctx = {0};
+        sync_init(&finish_ctx.sync);
+        wispers_quic_stream_finish_async(stream_ctx.stream, &finish_ctx, basic_callback);
+        sync_wait(&finish_ctx.sync, 10000);
+        sync_destroy(&finish_ctx.sync);
+
+        printf("PING sent. Waiting for PONG...\n");
+
+        // Read response
+        DataCtx read_ctx = {0};
+        sync_init(&read_ctx.sync);
+        status = wispers_quic_stream_read_async(stream_ctx.stream, 1024, &read_ctx, data_callback);
+        if (status != WISPERS_STATUS_SUCCESS || !sync_wait(&read_ctx.sync, 10000) || read_ctx.status != WISPERS_STATUS_SUCCESS) {
+            fprintf(stderr, "Failed to read response\n");
+            wispers_quic_stream_free(stream_ctx.stream);
+            wispers_quic_connection_free(conn_ctx.connection);
+            sync_destroy(&read_ctx.sync);
+            sync_destroy(&write_ctx.sync);
+            sync_destroy(&stream_ctx.sync);
+            sync_destroy(&conn_ctx.sync);
+            sync_destroy(&init_ctx.sync);
+            wispers_node_free(init_ctx.handle);
+            wispers_storage_free(storage);
+            free(storage_ctx);
+            return 1;
+        }
+
+        printf("Received: %.*s\n", (int)read_ctx.len, read_ctx.data);
+
+        // Close everything
+        BasicCtx close_ctx = {0};
+        sync_init(&close_ctx.sync);
+        wispers_quic_connection_close_async(conn_ctx.connection, &close_ctx, basic_callback);
+        sync_wait(&close_ctx.sync, 5000);
+        sync_destroy(&close_ctx.sync);
+
         wispers_quic_stream_free(stream_ctx.stream);
-        wispers_quic_connection_free(conn_ctx.connection);
-        sync_destroy(&write_ctx.sync);
-        sync_destroy(&stream_ctx.sync);
-        sync_destroy(&conn_ctx.sync);
-        sync_destroy(&init_ctx.sync);
-        wispers_node_free(init_ctx.handle);
-        wispers_storage_free(storage);
-        free(storage_ctx);
-        return 1;
-    }
-
-    // Finish sending
-    BasicCtx finish_ctx = {0};
-    sync_init(&finish_ctx.sync);
-    wispers_quic_stream_finish_async(stream_ctx.stream, &finish_ctx, basic_callback);
-    sync_wait(&finish_ctx.sync, 10000);
-    sync_destroy(&finish_ctx.sync);
-
-    printf("PING sent. Waiting for PONG...\n");
-
-    // Read response
-    DataCtx read_ctx = {0};
-    sync_init(&read_ctx.sync);
-    status = wispers_quic_stream_read_async(stream_ctx.stream, 1024, &read_ctx, data_callback);
-    if (status != WISPERS_STATUS_SUCCESS || !sync_wait(&read_ctx.sync, 10000) || read_ctx.status != WISPERS_STATUS_SUCCESS) {
-        fprintf(stderr, "Failed to read response\n");
-        wispers_quic_stream_free(stream_ctx.stream);
-        wispers_quic_connection_free(conn_ctx.connection);
         sync_destroy(&read_ctx.sync);
         sync_destroy(&write_ctx.sync);
         sync_destroy(&stream_ctx.sync);
         sync_destroy(&conn_ctx.sync);
-        sync_destroy(&init_ctx.sync);
-        wispers_node_free(init_ctx.handle);
-        wispers_storage_free(storage);
-        free(storage_ctx);
-        return 1;
+    } else {
+        // UDP ping (default)
+        printf("Connecting to node %d via UDP...\n", peer_node_number);
+
+        UdpConnCtx conn_ctx = {0};
+        sync_init(&conn_ctx.sync);
+        WispersStatus status = wispers_node_connect_udp_async(init_ctx.handle, peer_node_number, &conn_ctx, udp_conn_callback);
+        if (status != WISPERS_STATUS_SUCCESS) {
+            fprintf(stderr, "Failed to start connect: %s\n", status_str(status));
+            sync_destroy(&conn_ctx.sync);
+            sync_destroy(&init_ctx.sync);
+            wispers_node_free(init_ctx.handle);
+            wispers_storage_free(storage);
+            free(storage_ctx);
+            return 1;
+        }
+
+        if (!sync_wait(&conn_ctx.sync, 30000) || conn_ctx.status != WISPERS_STATUS_SUCCESS) {
+            fprintf(stderr, "Failed to connect: %s\n",
+                    sync_is_called(&conn_ctx.sync) ? status_str(conn_ctx.status) : "timeout");
+            sync_destroy(&conn_ctx.sync);
+            sync_destroy(&init_ctx.sync);
+            wispers_node_free(init_ctx.handle);
+            wispers_storage_free(storage);
+            free(storage_ctx);
+            return 1;
+        }
+
+        printf("Connected! Sending ping...\n");
+
+        status = wispers_udp_connection_send(conn_ctx.connection, (const uint8_t *)"ping", 4);
+        if (status != WISPERS_STATUS_SUCCESS) {
+            fprintf(stderr, "Failed to send ping: %s\n", status_str(status));
+            wispers_udp_connection_close(conn_ctx.connection);
+            sync_destroy(&conn_ctx.sync);
+            sync_destroy(&init_ctx.sync);
+            wispers_node_free(init_ctx.handle);
+            wispers_storage_free(storage);
+            free(storage_ctx);
+            return 1;
+        }
+
+        printf("ping sent. Waiting for pong...\n");
+
+        DataCtx recv_ctx = {0};
+        sync_init(&recv_ctx.sync);
+        status = wispers_udp_connection_recv_async(conn_ctx.connection, &recv_ctx, data_callback);
+        if (status != WISPERS_STATUS_SUCCESS || !sync_wait(&recv_ctx.sync, 10000) || recv_ctx.status != WISPERS_STATUS_SUCCESS) {
+            fprintf(stderr, "Failed to receive response\n");
+            wispers_udp_connection_close(conn_ctx.connection);
+            sync_destroy(&recv_ctx.sync);
+            sync_destroy(&conn_ctx.sync);
+            sync_destroy(&init_ctx.sync);
+            wispers_node_free(init_ctx.handle);
+            wispers_storage_free(storage);
+            free(storage_ctx);
+            return 1;
+        }
+
+        printf("Received: %.*s\n", (int)recv_ctx.len, recv_ctx.data);
+
+        wispers_udp_connection_close(conn_ctx.connection);
+        sync_destroy(&recv_ctx.sync);
+        sync_destroy(&conn_ctx.sync);
     }
 
-    printf("Received: %.*s\n", (int)read_ctx.len, read_ctx.data);
-
-    // Close everything
-    BasicCtx close_ctx = {0};
-    sync_init(&close_ctx.sync);
-    wispers_quic_connection_close_async(conn_ctx.connection, &close_ctx, basic_callback);
-    sync_wait(&close_ctx.sync, 5000);
-    sync_destroy(&close_ctx.sync);
-
-    wispers_quic_stream_free(stream_ctx.stream);
-    sync_destroy(&read_ctx.sync);
-    sync_destroy(&write_ctx.sync);
-    sync_destroy(&stream_ctx.sync);
-    sync_destroy(&conn_ctx.sync);
     sync_destroy(&init_ctx.sync);
     wispers_node_free(init_ctx.handle);
     wispers_storage_free(storage);
@@ -1161,7 +1410,7 @@ static int cmd_ping(int peer_node_number) {
 //------------------------------------------------------------------------------
 
 int main(int argc, char **argv) {
-    // Parse global options (--hub)
+    // Parse global options (--hub, --storage)
     int arg_idx = 1;
     while (arg_idx < argc && argv[arg_idx][0] == '-') {
         if (strcmp(argv[arg_idx], "--hub") == 0 && arg_idx + 1 < argc) {
@@ -1169,6 +1418,12 @@ int main(int argc, char **argv) {
             arg_idx += 2;
         } else if (strncmp(argv[arg_idx], "--hub=", 6) == 0) {
             g_hub_addr = argv[arg_idx] + 6;
+            arg_idx++;
+        } else if (strcmp(argv[arg_idx], "--storage") == 0 && arg_idx + 1 < argc) {
+            g_storage_dir = argv[arg_idx + 1];
+            arg_idx += 2;
+        } else if (strncmp(argv[arg_idx], "--storage=", 10) == 0) {
+            g_storage_dir = argv[arg_idx] + 10;
             arg_idx++;
         } else {
             break;  // Unknown option, might be command
@@ -1199,13 +1454,16 @@ int main(int argc, char **argv) {
             return 1;
         }
         return cmd_activate(argv[arg_idx]);
+    } else if (strcmp(command, "nodes") == 0) {
+        return cmd_nodes();
     } else if (strcmp(command, "serve") == 0) {
-        int print_activation_code = 0;
-        if (arg_idx < argc && strcmp(argv[arg_idx], "--activation-code") == 0) {
-            print_activation_code = 1;
-        }
-        return cmd_serve(print_activation_code);
+        return cmd_serve();
     } else if (strcmp(command, "ping") == 0) {
+        int use_quic = 0;
+        if (arg_idx < argc && strcmp(argv[arg_idx], "--quic") == 0) {
+            use_quic = 1;
+            arg_idx++;
+        }
         if (arg_idx >= argc) {
             fprintf(stderr, "Error: ping requires a node number\n");
             print_usage(argv[0]);
@@ -1216,7 +1474,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Error: invalid node number\n");
             return 1;
         }
-        return cmd_ping(peer);
+        return cmd_ping(peer, use_quic);
     } else {
         fprintf(stderr, "Unknown command: %s\n", command);
         print_usage(argv[0]);

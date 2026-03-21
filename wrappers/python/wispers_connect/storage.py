@@ -32,10 +32,10 @@ class FileStorage:
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def _key_path(self) -> Path:
-        return self._dir / "root_key"
+        return self._dir / "root_key.bin"
 
     def _reg_path(self) -> Path:
-        return self._dir / "registration"
+        return self._dir / "registration.pb"
 
     def load_root_key(self) -> bytes | None:
         p = self._key_path()

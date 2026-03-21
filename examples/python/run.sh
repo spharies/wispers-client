@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run a Python example with the correct library and module paths.
-# Usage: ./run.sh ping.py --storage /tmp/node-a --token <token>
+# Usage: ./run.sh ping.py [--hub ADDR] [--storage DIR] COMMAND [ARGS...]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -18,8 +18,11 @@ export LD_LIBRARY_PATH="$CLIENT_DIR/target/debug${LD_LIBRARY_PATH:+:$LD_LIBRARY_
 export PYTHONPATH="$CLIENT_DIR/wrappers/python${PYTHONPATH:+:$PYTHONPATH}"
 
 if [ $# -eq 0 ]; then
-    echo "Usage: ./run.sh <script.py> [args...]"
-    echo "Example: ./run.sh ping.py --storage /tmp/node-a --token <token>"
+    echo "Usage: ./run.sh ping.py [--hub ADDR] [--storage DIR] COMMAND [ARGS...]"
+    echo "Example: ./run.sh ping.py status"
+    echo "         ./run.sh ping.py register <token>"
+    echo "         ./run.sh ping.py serve"
+    echo "         ./run.sh ping.py ping 2"
     exit 1
 fi
 
