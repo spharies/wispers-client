@@ -72,7 +72,17 @@ class QuicConnection(Handle):
     def _do_close(self, ptr: Any) -> None:
         from ._library import get_lib
         lib = get_lib()
-        try:
-            call_async(lib.wispers_quic_connection_close_async, ptr, cb=BASIC_CB)
-        except Exception:
+        # close_async CONSUMES the handle on SUCCESS.  Only call _free if
+        # the initial status indicates the async op was never started.
+        from ._bridge import BASIC_CB as _cb, _new_pending, _lock, _pending
+        call_id, call = _new_pending()
+        ctx = ctypes.c_void_p(call_id)
+        status = lib.wispers_quic_connection_close_async(ptr, ctx, _cb)
+        if status != 0:
+            with _lock:
+                _pending.pop(call_id, None)
+            # Async op not started — handle not consumed, free it.
             lib.wispers_quic_connection_free(ptr)
+            return
+        # Handle was consumed. Wait for completion, ignore callback errors.
+        call.event.wait()

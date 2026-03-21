@@ -55,5 +55,8 @@ class Handle:
         self.close()
 
     def __del__(self) -> None:
-        if not self._closed:
-            self.close()
+        try:
+            if not self._closed:
+                self.close()
+        except Exception:
+            pass
