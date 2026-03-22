@@ -21,6 +21,7 @@ Global flags:
 from __future__ import annotations
 
 import argparse
+import os
 import platform
 import sys
 import threading
@@ -35,109 +36,53 @@ from wispers_connect import (
     ServingSession,
 )
 
-
-def default_storage_dir() -> Path:
-    """Return the default storage dir, matching wconnect --profile default."""
-    system = platform.system()
-    if system == "Darwin":
-        return Path.home() / "Library" / "Application Support" / "wconnect" / "default"
-    else:
-        # Linux and others: XDG config dir
-        xdg = Path(
-            __import__("os").environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
-        )
-        return xdg / "wconnect" / "default"
+# =============================================================================
+# main
+# =============================================================================
 
 
-def print_group(node: Node) -> None:
-    info = node.group_info()
-    print(f"  Group state: {info.state.name}")
-    for n in info.nodes:
-        tag = " (self)" if n.is_self else ""
-        online = " [online]" if n.is_online else ""
-        print(f"  Node {n.node_number}: {n.name or '(unnamed)'} — {n.activation_status.name}{tag}{online}")
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="wispers-connect example (compatible with wconnect, ffi_demo, wconnect-go)",
+    )
+    parser.add_argument("--hub", help="Override hub address")
+    parser.add_argument("--storage", help="Storage directory (default: platform config dir + wconnect/default/)")
+
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("status", help="Show current node state and registration info")
+
+    p_reg = sub.add_parser("register", help="Register this node with a registration token")
+    p_reg.add_argument("token", help="Registration token")
+
+    p_act = sub.add_parser("activate", help="Activate using an activation code from an endorser")
+    p_act.add_argument("code", help="Activation code")
+
+    sub.add_parser("nodes", help="List nodes in the connectivity group")
+
+    sub.add_parser("serve", help="Serve (accept connections, print activation code if needed)")
+
+    p_ping = sub.add_parser("ping", help="Ping a peer node (UDP by default, --quic for QUIC)")
+    p_ping.add_argument("node_num", type=int, help="Peer node number")
+    p_ping.add_argument("--quic", action="store_true", help="Use QUIC instead of UDP")
+
+    args = parser.parse_args()
+
+    handlers = {
+        "status": cmd_status,
+        "register": cmd_register,
+        "activate": cmd_activate,
+        "nodes": cmd_nodes,
+        "serve": cmd_serve,
+        "ping": cmd_ping,
+    }
+
+    sys.exit(handlers[args.command](args))
 
 
-def serve_in_background(session: ServingSession) -> threading.Thread:
-    """Run the serving session event loop in a daemon thread."""
-    t = threading.Thread(target=session.run, daemon=True)
-    t.start()
-    return t
-
-
-def handle_quic_stream(conn, stream) -> None:  # type: ignore[no-untyped-def]
-    """Handle one incoming QUIC stream using the wconnect protocol."""
-    try:
-        data = stream.read()
-        line = data.split(b"\n", 1)[0]
-
-        if line == b"PING":
-            print(f"  Received PING, sending PONG")
-            stream.write(b"PONG\n")
-            stream.finish()
-        else:
-            print(f"  Unknown command: {line!r}")
-    except Exception as e:
-        print(f"  Stream error: {e}")
-    finally:
-        stream.close()
-        conn.close()
-
-
-def handle_udp_connection(conn) -> None:  # type: ignore[no-untyped-def]
-    """Handle an incoming UDP connection using the wconnect protocol."""
-    try:
-        while True:
-            data = conn.recv()
-            if data == b"ping":
-                print(f"  Received ping, sending pong")
-                conn.send(b"pong")
-            else:
-                print(f"  Received {len(data)} bytes")
-    except Exception as e:
-        print(f"  UDP connection closed: {e}")
-
-
-def accept_loop(session: ServingSession) -> None:
-    """Accept incoming P2P connections and handle them."""
-    if session.incoming is None:
-        return
-
-    def accept_quic() -> None:
-        assert session.incoming is not None
-        while True:
-            try:
-                conn = session.incoming.accept_quic()
-                stream = conn.accept_stream()
-                threading.Thread(
-                    target=handle_quic_stream, args=(conn, stream), daemon=True,
-                ).start()
-            except Exception:
-                break
-
-    def accept_udp() -> None:
-        assert session.incoming is not None
-        while True:
-            try:
-                conn = session.incoming.accept_udp()
-                threading.Thread(
-                    target=handle_udp_connection, args=(conn,), daemon=True,
-                ).start()
-            except Exception:
-                break
-
-    threading.Thread(target=accept_quic, daemon=True).start()
-    threading.Thread(target=accept_udp, daemon=True).start()
-
-
-def init_node(args: argparse.Namespace) -> tuple[NodeStorage, Node, NodeState]:
-    """Create storage, restore or init node. Returns (storage, node, state)."""
-    storage_dir = Path(args.storage) if args.storage else default_storage_dir()
-    storage = NodeStorage.with_file_storage(storage_dir)
-    if args.hub:
-        storage.override_hub_addr(args.hub)
-    node, state = storage.restore_or_init()
-    return storage, node, state
+# =============================================================================
+# Commands
+# =============================================================================
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -231,15 +176,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
     serve_in_background(session)
     accept_loop(session)
 
-    # Auto-print activation code if this node can endorse
-    if state == NodeState.REGISTERED or (state == NodeState.ACTIVATED):
-        try:
-            info = node.group_info()
-            if info.state in (GroupState.CAN_ENDORSE, GroupState.BOOTSTRAP):
-                code = session.generate_activation_code()
-                print(f"\nActivation code for a new peer:\n  {code}\n")
-        except Exception:
-            pass  # Not critical if this fails
+    # Auto-print activation code if this node can endorse.
+    try:
+        info = node.group_info()
+        if info.state in (GroupState.CAN_ENDORSE, GroupState.BOOTSTRAP):
+            code = session.generate_activation_code()
+            print(f"\nActivation code for a new peer:\n  {code}\n")
+    except Exception:
+        pass
 
     print("Serving (Ctrl-C to quit)...")
     try:
@@ -264,100 +208,156 @@ def cmd_ping(args: argparse.Namespace) -> int:
         storage.close()
         return 1
 
-    # Start a serving session (needed for P2P connections)
-    session = node.start_serving()
-    serve_in_background(session)
-    accept_loop(session)
-
     peer = args.node_num
-    use_quic = args.quic
-    transport = "QUIC" if use_quic else "UDP"
+    transport = "QUIC" if args.quic else "UDP"
     print(f"Pinging node {peer} via {transport}...")
 
     start = time.monotonic()
 
-    if use_quic:
+    if args.quic:
         conn = node.connect_quic(peer)
-        connect_time = time.monotonic() - start
-        print(f"  Connected in {connect_time:.3f}s")
-
         stream = conn.open_stream()
         stream.write(b"PING\n")
         stream.finish()
 
         pong_start = time.monotonic()
         reply = stream.read()
-        rtt = time.monotonic() - pong_start
 
         if reply == b"PONG\n":
-            print(f"  Pong received in {rtt:.3f}s")
+            print(f"  Pong received in {time.monotonic() - pong_start:.3f}s")
         else:
             print(f"  Unexpected response: {reply!r}")
         stream.close()
         conn.close()
     else:
         conn = node.connect_udp(peer)
-        connect_time = time.monotonic() - start
-        print(f"  Connected in {connect_time:.3f}s")
-
         conn.send(b"ping")
+
         pong_start = time.monotonic()
         reply = conn.recv()
-        rtt = time.monotonic() - pong_start
 
         if reply == b"pong":
-            print(f"  Pong received in {rtt:.3f}s")
+            print(f"  Pong received in {time.monotonic() - pong_start:.3f}s")
         else:
             print(f"  Unexpected response: {reply!r}")
         conn.close()
 
     print(f"Ping successful! Total time: {time.monotonic() - start:.3f}s")
 
-    session.shutdown()
-    session.close()
     node.close()
     storage.close()
     return 0
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="wispers-connect example (compatible with wconnect, ffi_demo, wconnect-go)",
-    )
-    parser.add_argument("--hub", help="Override hub address")
-    parser.add_argument("--storage", help="Storage directory (default: platform config dir + wconnect/default/)")
+# =============================================================================
+# Serve helpers
+# =============================================================================
 
-    sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("status", help="Show current node state and registration info")
+def serve_in_background(session: ServingSession) -> threading.Thread:
+    t = threading.Thread(target=session.run, daemon=True)
+    t.start()
+    return t
 
-    p_reg = sub.add_parser("register", help="Register this node with a registration token")
-    p_reg.add_argument("token", help="Registration token")
 
-    p_act = sub.add_parser("activate", help="Activate using an activation code from an endorser")
-    p_act.add_argument("code", help="Activation code")
+def accept_loop(session: ServingSession) -> None:
+    if session.incoming is None:
+        return
 
-    sub.add_parser("nodes", help="List nodes in the connectivity group")
+    def accept_quic() -> None:
+        assert session.incoming is not None
+        while True:
+            try:
+                conn = session.incoming.accept_quic()
+                stream = conn.accept_stream()
+                threading.Thread(
+                    target=handle_quic_stream, args=(conn, stream), daemon=True,
+                ).start()
+            except Exception:
+                break
 
-    sub.add_parser("serve", help="Serve (accept connections, print activation code if needed)")
+    def accept_udp() -> None:
+        assert session.incoming is not None
+        while True:
+            try:
+                conn = session.incoming.accept_udp()
+                threading.Thread(
+                    target=handle_udp_connection, args=(conn,), daemon=True,
+                ).start()
+            except Exception:
+                break
 
-    p_ping = sub.add_parser("ping", help="Ping a peer node (UDP by default, --quic for QUIC)")
-    p_ping.add_argument("node_num", type=int, help="Peer node number")
-    p_ping.add_argument("--quic", action="store_true", help="Use QUIC instead of UDP")
+    print("Listening for incoming connections...")
+    threading.Thread(target=accept_quic, daemon=True).start()
+    threading.Thread(target=accept_udp, daemon=True).start()
 
-    args = parser.parse_args()
 
-    handlers = {
-        "status": cmd_status,
-        "register": cmd_register,
-        "activate": cmd_activate,
-        "nodes": cmd_nodes,
-        "serve": cmd_serve,
-        "ping": cmd_ping,
-    }
+def handle_quic_stream(conn, stream) -> None:  # type: ignore[no-untyped-def]
+    try:
+        data = stream.read()
+        line = data.split(b"\n", 1)[0]
+        if line == b"PING":
+            print("  Received PING, sending PONG")
+            stream.write(b"PONG\n")
+            stream.finish()
+        else:
+            print(f"  Unknown command: {line!r}")
+    except Exception as e:
+        print(f"  Stream error: {e}")
+    finally:
+        stream.close()
+        conn.close()
 
-    sys.exit(handlers[args.command](args))
 
+def handle_udp_connection(conn) -> None:  # type: ignore[no-untyped-def]
+    try:
+        while True:
+            data = conn.recv()
+            if data == b"ping":
+                print("  Received ping, sending pong")
+                conn.send(b"pong")
+            else:
+                print(f"  Received {len(data)} bytes")
+    except Exception:
+        pass
+
+
+# =============================================================================
+# Node init helpers
+# =============================================================================
+
+
+def init_node(args: argparse.Namespace) -> tuple[NodeStorage, Node, NodeState]:
+    storage_dir = Path(args.storage) if args.storage else default_storage_dir()
+    storage = NodeStorage.with_file_storage(storage_dir)
+    if args.hub:
+        storage.override_hub_addr(args.hub)
+    node, state = storage.restore_or_init()
+    return storage, node, state
+
+
+def default_storage_dir() -> Path:
+    if platform.system() == "Darwin":
+        return Path.home() / "Library" / "Application Support" / "wconnect" / "default"
+    xdg = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
+    return Path(xdg) / "wconnect" / "default"
+
+
+# =============================================================================
+# Display helpers
+# =============================================================================
+
+
+def print_group(node: Node) -> None:
+    info = node.group_info()
+    print(f"  Group state: {info.state.name}")
+    for n in info.nodes:
+        tag = " (self)" if n.is_self else ""
+        online = " [online]" if n.is_online else ""
+        print(f"  Node {n.node_number}: {n.name or '(unnamed)'} — {n.activation_status.name}{tag}{online}")
+
+
+# =============================================================================
 
 if __name__ == "__main__":
     main()
