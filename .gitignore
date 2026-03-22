@@ -43,6 +43,12 @@
 # Environment files
 .env
 
+# IDE files
+.idea/
+
+# Android local config
+local.properties
+
 # Emacs temp files
 *~
 
