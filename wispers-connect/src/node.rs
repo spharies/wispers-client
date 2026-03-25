@@ -689,6 +689,32 @@ impl Node {
     // Activated operations
     // -------------------------------------------------------------------------
 
+    /// Look up a peer in the roster. If the peer isn't in the cached roster
+    /// (e.g. they were activated after this node started), refetch from the hub.
+    async fn find_peer_in_roster(
+        &self,
+        client: &mut crate::hub::HubClient,
+        peer_node_number: i32,
+    ) -> Result<proto::roster::Node, crate::p2p::P2pError> {
+        let roster = self.roster.as_ref().expect("activated");
+        if let Some(node) = roster.nodes.iter().find(|n| n.node_number == peer_node_number && !n.revoked) {
+            return Ok(node.clone());
+        }
+
+        log::info!("Peer node {} not in cached roster, refetching from hub", peer_node_number);
+        let registration = self.persisted.registration.as_ref().expect("activated");
+        let fresh_roster = client
+            .get_and_verify_roster(registration, &self.signing_key.public_key_spki())
+            .await?;
+
+        fresh_roster
+            .nodes
+            .iter()
+            .find(|n| n.node_number == peer_node_number && !n.revoked)
+            .cloned()
+            .ok_or(crate::p2p::P2pError::SignatureVerificationFailed)
+    }
+
     /// Connect to a peer node using UDP transport.
     ///
     /// Requires: Activated state.
@@ -709,7 +735,6 @@ impl Node {
         }
 
         let registration = self.persisted.registration.as_ref().expect("activated");
-        let roster = self.roster.as_ref().expect("activated");
         let hub_addr = self.hub_addr();
 
         // Connect to hub
@@ -744,12 +769,8 @@ impl Node {
         // Send to hub
         let response = client.start_connection(registration, request).await?;
 
-        // Verify answerer's signature against roster
-        let peer_node = roster
-            .nodes
-            .iter()
-            .find(|n| n.node_number == peer_node_number)
-            .ok_or(P2pError::SignatureVerificationFailed)?;
+        // Verify answerer's signature against roster (refetch if peer is unknown)
+        let peer_node = self.find_peer_in_roster(&mut client, peer_node_number).await?;
 
         let verifying_key = VerifyingKey::from_public_key_der(&peer_node.public_key_spki)
             .map_err(|_| P2pError::SignatureVerificationFailed)?;
@@ -810,7 +831,6 @@ impl Node {
         }
 
         let registration = self.persisted.registration.as_ref().expect("activated");
-        let roster = self.roster.as_ref().expect("activated");
         let hub_addr = self.hub_addr();
 
         // Connect to hub
@@ -845,12 +865,8 @@ impl Node {
         // Send to hub
         let response = client.start_connection(registration, request).await?;
 
-        // Verify answerer's signature against roster
-        let peer_node = roster
-            .nodes
-            .iter()
-            .find(|n| n.node_number == peer_node_number)
-            .ok_or(P2pError::SignatureVerificationFailed)?;
+        // Verify answerer's signature against roster (refetch if peer is unknown)
+        let peer_node = self.find_peer_in_roster(&mut client, peer_node_number).await?;
 
         let verifying_key = VerifyingKey::from_public_key_der(&peer_node.public_key_spki)
             .map_err(|_| P2pError::SignatureVerificationFailed)?;
