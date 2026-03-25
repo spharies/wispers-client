@@ -202,8 +202,9 @@ pub struct Node {
     config: SharedConfig,
     // Derived from root key at construction time
     signing_key: SigningKeyPair,
-    // Present after activation:
-    roster: Option<proto::roster::Roster>,
+    // Present after activation. RwLock so that connect methods (&self) can
+    // transparently refetch from the hub when a peer isn't in the cached roster.
+    roster: RwLock<Option<proto::roster::Roster>>,
 }
 
 impl Node {
@@ -219,7 +220,7 @@ impl Node {
             persisted,
             store,
             config,
-            roster: None,
+            roster: RwLock::new(None),
         }
     }
 
@@ -238,7 +239,7 @@ impl Node {
             persisted,
             store,
             config,
-            roster: None,
+            roster: RwLock::new(None),
         })
     }
 
@@ -255,7 +256,7 @@ impl Node {
             persisted,
             store,
             config,
-            roster: Some(roster),
+            roster: RwLock::new(Some(roster)),
         }
     }
 
@@ -265,7 +266,7 @@ impl Node {
     /// - `Registered` if registered but not in the roster
     /// - `Activated` if registered and in the roster
     pub fn state(&self) -> NodeState {
-        if self.roster.is_some() {
+        if self.roster.read().unwrap().is_some() {
             NodeState::Activated
         } else if self.persisted.registration.is_some() {
             NodeState::Registered
@@ -680,7 +681,7 @@ impl Node {
         .map_err(NodeStateError::RosterVerificationFailed)?;
 
         // Update to activated state (keys already derived at construction)
-        self.roster = Some(cosigned_roster);
+        *self.roster.write().unwrap() = Some(cosigned_roster);
 
         Ok(())
     }
@@ -696,9 +697,12 @@ impl Node {
         client: &mut crate::hub::HubClient,
         peer_node_number: i32,
     ) -> Result<proto::roster::Node, crate::p2p::P2pError> {
-        let roster = self.roster.as_ref().expect("activated");
-        if let Some(node) = roster.nodes.iter().find(|n| n.node_number == peer_node_number && !n.revoked) {
-            return Ok(node.clone());
+        {
+            let roster = self.roster.read().unwrap();
+            let roster = roster.as_ref().expect("activated");
+            if let Some(node) = roster.nodes.iter().find(|n| n.node_number == peer_node_number && !n.revoked) {
+                return Ok(node.clone());
+            }
         }
 
         log::info!("Peer node {} not in cached roster, refetching from hub", peer_node_number);
@@ -707,12 +711,15 @@ impl Node {
             .get_and_verify_roster(registration, &self.signing_key.public_key_spki())
             .await?;
 
-        fresh_roster
+        let peer_node = fresh_roster
             .nodes
             .iter()
             .find(|n| n.node_number == peer_node_number && !n.revoked)
             .cloned()
-            .ok_or(crate::p2p::P2pError::SignatureVerificationFailed)
+            .ok_or(crate::p2p::P2pError::SignatureVerificationFailed)?;
+
+        *self.roster.write().unwrap() = Some(fresh_roster);
+        Ok(peer_node)
     }
 
     /// Connect to a peer node using UDP transport.
@@ -941,10 +948,10 @@ impl Node {
                 use crate::roster::{active_nodes, compute_roster_hash, create_revocation_roster};
 
                 let registration = self.persisted.registration.as_ref().expect("activated");
-                let roster = self.roster.as_ref().expect("activated");
+                let roster = self.roster.read().unwrap().clone().expect("activated");
 
                 // Check: prevent revoking the last active node
-                let active_count = active_nodes(roster).count();
+                let active_count = active_nodes(&roster).count();
                 if active_count <= 1 {
                     return Err(NodeStateError::LastActiveNode);
                 }
@@ -954,7 +961,7 @@ impl Node {
                     .map_err(NodeStateError::hub)?;
 
                 // Step 1: Self-revoke from roster
-                let base_hash = compute_roster_hash(roster);
+                let base_hash = compute_roster_hash(&roster);
                 let payload = revocation::Payload {
                     base_version: roster.version,
                     base_version_hash: base_hash,
@@ -965,7 +972,7 @@ impl Node {
                 let signature = self.signing_key.sign(&payload.encode_to_vec());
 
                 let new_roster = create_revocation_roster(
-                    roster,
+                    &roster,
                     registration.node_number,
                     registration.node_number,
                     signature,
@@ -1015,7 +1022,7 @@ impl Node {
             config: Arc::new(std::sync::RwLock::new(RuntimeConfig::new_with_addr(
                 hub_addr,
             ))),
-            roster: Some(roster),
+            roster: RwLock::new(Some(roster)),
         }
     }
 }
